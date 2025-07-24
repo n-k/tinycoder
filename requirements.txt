@@ -1,0 +1,11 @@
+# this file is there so i can make a venv and make vscode shutup about deps
+# we dont need it at all as the deps are inline in the script
+pydantic
+langchain-core
+langchain-community
+langchain-google-genai
+langchain-ollama
+langchain-openai
+py-jsonl
+requests
+py-jsonl
