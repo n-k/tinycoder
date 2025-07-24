@@ -328,12 +328,10 @@ def _make_progress(messages):
         t = tool_calls[0]
         tool_name = t["name"]
         args = t["args"]
-        print(f"Calling {tool_name}({args})...")
         can_continue, tool_result = run_tool(
             tool_name,
             args,
         )
-        print('done')
         skip_input = can_continue
         if tool_result is not None:
             # we don't set tool message if None
@@ -466,6 +464,8 @@ def run_tool(name, args):
             - str or None: The tool's output or None if user input is needed
     """
     if name == "ExecuteCommand" or name == "execute_command":
+        if not input(f"Allow running {args['command']} y/n?") == 'y':
+            return False, 'User rejected command'
         return True, execute_command(ExecuteCommand.model_validate(args))
     elif name == "AskFollowupQuestion" or name == "ask_followup_question":
         return False, ask_followup_question(AskFollowupQuestion.model_validate(args))
