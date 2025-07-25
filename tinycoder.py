@@ -1,4 +1,9 @@
-#!/usr/bin/env -S uv run --script
+#!/usr/bin/env -S uv run -q --script
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Copyright (c) 2025 Nipun Kumar
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -88,6 +93,8 @@ def _get_command_parser() -> argparse.ArgumentParser:
         "text", nargs=argparse.REMAINDER, help="Message text to send"
     )
 
+    subparsers.add_parser("find_free", help="Find free models on openrouter")
+
     return parser
 
 
@@ -103,9 +110,30 @@ async def main():
         init_shell()
     elif args.command == "message":
         message(" ".join(args.text))
+    elif args.command == "find_free":
+        find_free()
     else:
         _get_command_parser().print_help()
 
+
+def find_free():
+    def _is_free_w_tools(model):
+        params = model.get('supported_parameters', [])
+        if not 'tools' in params:
+            return False
+        pricing = model.get("pricing", {})
+        for k in pricing:
+            if not pricing[k] == '0':
+                return False
+        return True
+    response = requests.get("https://openrouter.ai/api/v1/models")
+    models = response.json().get('data', [])
+    free_tool_models = [
+        model for model in models if _is_free_w_tools(model)]
+
+    print(f'Found {len(free_tool_models)}')
+    for m in free_tool_models:
+        print(m.get('id'))
 
 def init_shell():
     """Initialize the shell environment by generating shell script commands.
@@ -217,29 +245,6 @@ def _get_client():
     """
     model_provider = os.environ.get("MODEL_PROVIDER", 'openrouter')
     model_name = os.environ.get("MODEL_NAME", 'qwen/qwen3-coder:free')
-
-    if model_provider == 'openrouter:free':
-        def _is_free_w_tools(model):
-            params = model.get('supported_parameters', [])
-            if not 'tools' in params:
-                return False
-            pricing = model.get("pricing", {})
-            for k in pricing:
-                if not pricing[k] == '0':
-                    return False
-            return True
-        response = requests.get("https://openrouter.ai/api/v1/models")
-        models = response.json().get('data', [])
-        free_tool_models = [
-            model for model in models if _is_free_w_tools(model)]
-
-        if len(free_tool_models) == 0:
-            print('Could not find any free models', file=sys.stderr)
-            sys.exit(1)
-
-        # TODO: have more ways of selecting a good free model
-        model_name = free_tool_models[0]['id']
-        model_provider = 'openrouter'
 
     llm = None
     if model_provider == 'openrouter':
@@ -359,11 +364,8 @@ class ExecuteCommand(BaseModel):
     Args:
     - command: (required) The CLI command to execute. This should be valid for the current operating system. 
         Ensure the command is properly formatted and does not contain any harmful instructions.
-    - requires_approval: (optional) A boolean indicating whether this command requires explicit user approval 
-        before execution in case the user has auto-approve mode enabled. 
-        Set to 'true' for potentially impactful operations.
 
-    Typical usage example:
+    Typical usage examples:
 
     Example - list files:
     execute_command(command="ls -a")
@@ -374,16 +376,12 @@ class ExecuteCommand(BaseModel):
     Example - create file:
     execute_command(command="touch path/to/the/file")
     Example - delete file:
-    execute_command(command="rm path/to/the/file", requires_approval=true)
+    execute_command(command="rm path/to/the/file")
     """
 
     command: str = Field(
         ...,
         description="The CLI command to execute. This should be valid for the current operating system. Ensure the command is properly formatted and does not contain any harmful instructions.",
-    )
-    requires_approval: Optional[bool] = Field(
-        None,
-        description="A boolean indicating whether this command requires explicit user approval before execution in case the user has auto-approve mode enabled. Set to true for potentially impactful operations like installing/uninstalling packages, deleting/overwriting files, system configuration changes, network operations, or any commands that could have unintended side effects. Set to false for safe operations like reading files/directories, running development servers, building projects, and other non-destructive operations.",
     )
 
 
@@ -464,9 +462,11 @@ def run_tool(name, args):
             - str or None: The tool's output or None if user input is needed
     """
     if name == "ExecuteCommand" or name == "execute_command":
-        if not input(f"Allow running {args['command']} y/n?") == 'y':
-            return False, 'User rejected command'
-        return True, execute_command(ExecuteCommand.model_validate(args))
+        exec = ExecuteCommand.model_validate(args)
+        if not exec.command.split()[0] in ['ls', 'find', 'grep']:
+            if not input(f"Allow running {exec.command} ? [y/n]: ") == 'y':
+                return True, f'User rejected running this command: {exec.command}'
+        return True, execute_command(exec)
     elif name == "AskFollowupQuestion" or name == "ask_followup_question":
         return False, ask_followup_question(AskFollowupQuestion.model_validate(args))
     return False, "Tool not found"
