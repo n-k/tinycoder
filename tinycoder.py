@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import datetime
 import os
+import itertools
 import json
 import jsonl
 import requests
@@ -36,6 +37,8 @@ import string
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 from typing import Optional, List, Any
 
 import bashlex
@@ -242,9 +245,6 @@ def get_cwd() -> str:
 
 def _get_client():
     """Initialize and configure the appropriate LLM client based on environment settings.
-
-    Supports multiple providers including OpenRouter, Google, and Ollama.
-    Automatically discovers free models when using OpenRouter:free provider.
     Configures the client with tool binding for command execution and user interaction.
 
     Returns:
@@ -264,8 +264,7 @@ def _get_client():
             sys.exit(1)
         llm = ChatOpenAI(
             api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            openai_api_key=os.environ.get(
-                "OPENROUTER_API_KEY", None),  # type: ignore
+            openai_api_key=os.environ.get("OPENROUTER_API_KEY", None),  # type: ignore
             openai_api_base="https://openrouter.ai/api/v1",  # type: ignore
             model_name=model_name,  # type: ignore
         )
@@ -333,7 +332,7 @@ def _make_progress(messages):
                 and "name" in _parsed
                 and ("arguments" in _parsed or "args" in _parsed)
             ):
-                if not "args" in _parsed:
+                if "args" not in _parsed:
                     _parsed["args"] = _parsed["arguments"]
                 tool_calls = [_parsed]
         if len(tool_calls) == 0:
@@ -363,7 +362,7 @@ def _make_progress(messages):
 
 
 class ExecuteCommand(BaseModel):
-    """Request to execute a CLI command on the system. 
+    """Request to execute a CLI command on the system.
 
     Use this for EVERYTHING. Some ideas are:
     This tool can be used to create or overwrite files using `echo` or `touch` commands.
@@ -419,23 +418,82 @@ def execute_command(args: ExecuteCommand) -> str:
     Handles both successful execution and errors, returning appropriate results.
 
     Args:
-        args (ExecuteCommand): The command to execute and optional approval flag.
+        args (ExecuteCommand): The command to execute.
 
     Returns:
         str: The command output or error message.
     """
+    class Walker(bashlex.ast.nodevisitor): # type: ignore
+        def __init__(self):
+            super().__init__()
+            self.commands = []
+        
+        def visitcommand(self, n, parts):
+            if len(parts) > 0:
+                if parts[0].kind == 'word':
+                    self.commands.append(parts[0].word)
+            return True # visit children
+    tree = bashlex.parse(args.command)
+    if not isinstance(tree, list):
+        tree = [tree]
+    walker = Walker()
+    for t in tree:
+        walker.visit(t)
+    commands = walker.commands
+    if not all(cmd in SAFE_COMMANDS for cmd in commands):
+        if not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
+            return f'User rejected running this command: {args.command}'
+    def _run_command(command, output_dict):
+        error_label = 'Error while running command'
+        success_label = 'Command ran successfully'
+        try:
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output['process'] = process
+            stdout, _ = process.communicate()
+            output_dict['code'] = process.returncode
+            if process.returncode == 0: 
+                label = success_label 
+            else:
+                label = error_label
+            output_dict['result'] = f"${command}\\n{label}\\n{stdout}"
+        except subprocess.CalledProcessError as e:
+            output_dict['code'] = 1
+            output_dict['result'] = f"${command}\\n{error_label}\\n{stdout}"
+    output = {}
+    thread = threading.Thread(
+        target=_run_command, args=(args.command, output), 
+        daemon=True)
+    thread.start()
+    spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
+    label = f'[Ctrl+C to kill] ${commands[0]} ...'
     try:
-        process = subprocess.run(
-            args.command,
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        return f"${args.command}\\n{process.stdout}"
-    except subprocess.CalledProcessError as e:
-        return f"Error executing command: {e.stderr}"
+        while thread.is_alive():
+            sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+            sys.stdout.flush()
+            time.sleep(0.1)
+        thread.join()
+        if output["code"] == 0:
+            sys.stdout.write(f"\r[✅] {label}\n")
+        else:
+            sys.stdout.write(f"\r[❌] {label}\n")
+        sys.stdout.flush()
+    except KeyboardInterrupt:
+        sys.stdout.write("\r[✖️] Interrupted\n")
+        sys.stdout.flush()
+        if output["process"]:
+            try:
+                output["process"].terminate()
+                output["process"].wait(timeout=3)
+            except Exception:
+                output["process"].kill()
+        output['result'] = f'${args.command}\\nKilled by user'
+    return output['result']
 
 
 def ask_followup_question(args: AskFollowupQuestion):
@@ -470,11 +528,6 @@ def run_tool(name, args):
     """
     if name == "ExecuteCommand" or name == "execute_command":
         exec = ExecuteCommand.model_validate(args)
-        commands = [p.parts[0].word for n in bashlex.parse(
-            exec.command) for p in getattr(n, 'parts', []) if p.kind == 'command']
-        if not all(cmd in SAFE_COMMANDS for cmd in commands):
-            if not input(f"Allow running {exec.command} ? [y/n]: ") == 'y':
-                return True, f'User rejected running this command: {exec.command}'
         return True, execute_command(exec)
     elif name == "AskFollowupQuestion" or name == "ask_followup_question":
         return False, ask_followup_question(AskFollowupQuestion.model_validate(args))
