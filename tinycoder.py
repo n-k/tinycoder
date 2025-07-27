@@ -15,6 +15,7 @@
 #   "langchain-openai",
 #   "py-jsonl",
 #   "requests",
+#   "bashlex",
 # ]
 # ///
 
@@ -36,6 +37,8 @@ import subprocess
 import sys
 import tempfile
 from typing import Optional, List, Any
+
+import bashlex
 
 from pydantic import BaseModel, Field
 
@@ -59,11 +62,16 @@ You do EVERYTHING using the command line and with standard unix tools like
     ls, cat, grep, sed, awk, find ...
 ====
 """
+SAFE_COMMANDS = {
+    'ls', 'find', 'grep', 'echo', 'cat', 'pwd', 'which', 'whoami',
+    'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
+    'dirname', 'stat',
+}
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser for the CLI tool.
-    
+
     Returns:
         argparse.ArgumentParser: Configured argument parser with subcommands
             for initializing shell environment and sending messages.
@@ -100,7 +108,7 @@ def _get_command_parser() -> argparse.ArgumentParser:
 
 async def main():
     """Main entry point for the CLI tool.
-    
+
     Parses command line arguments and routes to the appropriate function
     based on the subcommand provided (init_shell or message).
     """
@@ -119,7 +127,7 @@ async def main():
 def find_free():
     def _is_free_w_tools(model):
         params = model.get('supported_parameters', [])
-        if not 'tools' in params:
+        if 'tools' not in params:
             return False
         pricing = model.get("pricing", {})
         for k in pricing:
@@ -135,11 +143,12 @@ def find_free():
     for m in free_tool_models:
         print(m.get('id'))
 
+
 def init_shell():
     """Initialize the shell environment by generating shell script commands.
-    
+
     Creates a unique log file for the session and outputs shell configuration
-    commands including aliases for AI interaction (ai, aiedit) and deactivation.
+    commands including aliases for AI interaction (ai,aiedit) and deactivation.
     The function sets up shell environment variables and functions needed for
     TinyCoder to operate within the shell.
     """
@@ -180,8 +189,8 @@ _deactivate_tiny_coder() {{
     unset TINY_CODER_ACTIVE
     unset TINY_CODER_LOG_PATH
     unset OLD_PS1
-    unset -f _deactivate_tiny_coder 
-    unset -f _edit_and_message 
+    unset -f _deactivate_tiny_coder
+    unset -f _edit_and_message
     rm -f {log_file_path}
 }}
 PS1="[✨ai] $PS1"
@@ -191,11 +200,11 @@ PS1="[✨ai] $PS1"
 
 def message(text):
     """Process and log a user message, then generate AI response.
-    
+
     Loads previous conversation from log file, appends the new message,
     and invokes the AI model to generate a response. The conversation
     history is maintained in the log file.
-    
+
     Args:
         text (str): The user's message text to be processed.
     """
@@ -203,7 +212,8 @@ def message(text):
     if os.environ.get("TINY_CODER_ACTIVE", None) is None or log_file is None:
         print(
             """TinyCoder is not active.
-            Did you initialize your shell with `source <(path/to/tinycoder.py init_shell)` ?
+            Did you initialize your shell with `source <(path/to/tinycoder.py 
+            init_shell)` ?
             """,
             file=sys.stderr,
         )
@@ -223,7 +233,7 @@ def message(text):
 
 def get_cwd() -> str:
     """Get the current working directory.
-    
+
     Returns:
         str: The absolute path of the current working directory.
     """
@@ -232,14 +242,14 @@ def get_cwd() -> str:
 
 def _get_client():
     """Initialize and configure the appropriate LLM client based on environment settings.
-    
+
     Supports multiple providers including OpenRouter, Google, and Ollama.
     Automatically discovers free models when using OpenRouter:free provider.
     Configures the client with tool binding for command execution and user interaction.
-    
+
     Returns:
         A configured LLM client with tool binding.
-        
+
     Raises:
         SystemExit: If required API keys are not set for the selected provider.
     """
@@ -285,14 +295,14 @@ def _get_client():
 
 def _make_progress(messages):
     """Process messages through the LLM and handle tool calls.
-    
+
     Sends messages to the LLM and processes any tool calls in the response.
     Handles both direct tool calls and tool calls embedded in the response content.
     Continues processing until a final response is generated.
-    
+
     Args:
         messages (List[BaseMessage]): List of messages in the conversation history.
-        
+
     Returns:
         List[BaseMessage]: Updated list of messages including responses and tool results.
     """
@@ -354,7 +364,7 @@ def _make_progress(messages):
 
 class ExecuteCommand(BaseModel):
     """Request to execute a CLI command on the system. 
-    
+
     Use this for EVERYTHING. Some ideas are:
     This tool can be used to create or overwrite files using `echo` or `touch` commands.
     This tool can be used to list files using `ls` command.
@@ -387,7 +397,7 @@ class ExecuteCommand(BaseModel):
 
 class AskFollowupQuestion(BaseModel):
     """Ask the user a question to gather additional information needed to complete the task.
-    
+
     This tool should be used to ask for clarifications about the current task only.
     You must avoid conversation if possible.
     """
@@ -404,13 +414,13 @@ class AskFollowupQuestion(BaseModel):
 
 def execute_command(args: ExecuteCommand) -> str:
     """Execute a CLI command on the system and return its output.
-    
+
     Runs the specified command using subprocess and captures its output.
     Handles both successful execution and errors, returning appropriate results.
-    
+
     Args:
         args (ExecuteCommand): The command to execute and optional approval flag.
-        
+
     Returns:
         str: The command output or error message.
     """
@@ -430,13 +440,13 @@ def execute_command(args: ExecuteCommand) -> str:
 
 def ask_followup_question(args: AskFollowupQuestion):
     """Present a question to the user for additional information.
-    
+
     Formats and displays a question to the user, along with optional answer choices.
     Used when the AI needs clarification to complete a task.
-    
+
     Args:
         args (AskFollowupQuestion): The question and optional answer options.
-        
+
     Returns:
         None: This function prints the question and returns None.
     """
@@ -448,14 +458,11 @@ def ask_followup_question(args: AskFollowupQuestion):
 
 def run_tool(name, args):
     """Execute a tool by name with the provided arguments.
-    
-    Routes tool execution requests to the appropriate handler functions
-    based on the tool name.
-    
+
     Args:
         name (str): The name of the tool to execute.
         args (dict): Arguments to pass to the tool.
-        
+
     Returns:
         tuple: A tuple containing:
             - bool: Whether processing can continue automatically
@@ -463,7 +470,9 @@ def run_tool(name, args):
     """
     if name == "ExecuteCommand" or name == "execute_command":
         exec = ExecuteCommand.model_validate(args)
-        if not exec.command.split()[0] in ['ls', 'find', 'grep']:
+        commands = [p.parts[0].word for n in bashlex.parse(
+            exec.command) for p in getattr(n, 'parts', []) if p.kind == 'command']
+        if not all(cmd in SAFE_COMMANDS for cmd in commands):
             if not input(f"Allow running {exec.command} ? [y/n]: ") == 'y':
                 return True, f'User rejected running this command: {exec.command}'
         return True, execute_command(exec)

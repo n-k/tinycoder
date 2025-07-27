@@ -9,3 +9,5 @@ langchain-openai
 py-jsonl
 requests
 py-jsonl
+bashlex
+
