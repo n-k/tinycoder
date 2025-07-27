@@ -31,6 +31,7 @@ import os
 import itertools
 import json
 import jsonl
+import queue
 import requests
 import secrets
 import string
@@ -443,8 +444,7 @@ def execute_command(args: ExecuteCommand) -> str:
     if not all(cmd in SAFE_COMMANDS for cmd in commands):
         if not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
             return f'User rejected running this command: {args.command}'
-    def _run_command(command, output_dict):
-        time.sleep(10)
+    def _run_command(command, output_queue, result_dict):
         error_label = 'Error while running command'
         success_label = 'Command ran successfully'
         try:
@@ -457,79 +457,91 @@ def execute_command(args: ExecuteCommand) -> str:
                 bufsize=1,
                 universal_newlines=True
             )
-            output_dict['process'] = process
+            result_dict['process'] = process
             output_lines = []
             
             # Read output line by line as it's generated
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
-                    output_lines.append(line.rstrip())
-                    # Signal that we have new output
-                    output_dict['new_output'] = line.rstrip()
-                    output_dict['has_new_output'] = True
+                    line_stripped = line.rstrip()
+                    output_lines.append(line_stripped)
+                    # Send output line through the queue
+                    output_queue.put(('output', line_stripped))
             
             process.wait()
-            output_dict['code'] = process.returncode
+            result_dict['code'] = process.returncode
             stdout = '\n'.join(output_lines)
             
             if process.returncode == 0: 
                 label = success_label 
             else:
                 label = error_label
-            output_dict['result'] = f"${command}\\n{label}\\n{stdout}"
-        except subprocess.CalledProcessError as e:
-            output_dict['code'] = 1
-            output_dict['result'] = f"${command}\\n{error_label}\\n"
-    output = {}
+            result_dict['result'] = f"${command}\\n{label}\\n{stdout}"
+            
+            # Signal completion
+            output_queue.put(('done', result_dict['code']))
+            
+        except:
+            result_dict['code'] = 1
+            result_dict['result'] = f"${command}\\n{error_label}\\n"
+            output_queue.put(('done', 1))
+    
+    # Create queue for thread communication
+    output_queue = queue.Queue()
+    result_dict = {}
+    
     thread = threading.Thread(
-        target=_run_command, args=(args.command, output), 
+        target=_run_command, args=(args.command, output_queue, result_dict), 
         daemon=True)
     thread.start()
+    
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
     label = f'[Ctrl+C to kill] ${commands[0]} ...'
-    spinner_line_active = True
-    
+    command_finished = False
+    sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+    sys.stdout.flush()
     try:
-        while thread.is_alive():
-            # Check if there's new output to print
-            if output.get('has_new_output', False):
-                # Clear the spinner line and print the output
-                if spinner_line_active:
+        while not command_finished:
+            try:
+                # Check for new output with a short timeout
+                msg_type, data = output_queue.get(timeout=0.1)
+                
+                if msg_type == 'output':
                     sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
-                print(output.get('new_output', ''))
-                output['has_new_output'] = False
-                spinner_line_active = False
-            else:
-                # Show spinner if no new output
-                if not spinner_line_active:
-                    spinner_line_active = True
+                    print(data)
+                    sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+                    sys.stdout.flush()
+                elif msg_type == 'done':
+                    command_finished = True
+                    result_dict['code'] = data
+            except queue.Empty:
                 sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
                 sys.stdout.flush()
-            time.sleep(0.1)
         
         thread.join()
         
         # Clear spinner line before showing final status
-        if spinner_line_active:
-            sys.stdout.write(f"\r{' ' * 80}\r")
+        sys.stdout.write(f"\r{' ' * 80}\r")
         
-        if output.get("code", 1) == 0:
+        if result_dict.get("code", 1) == 0:
             sys.stdout.write(f"[✅] {label}\n")
         else:
             sys.stdout.write(f"[❌] {label}\n")
         sys.stdout.flush()
+        
     except KeyboardInterrupt:
         sys.stdout.write(f"\r{' ' * 80}\r[✖️] Interrupted\n")
         sys.stdout.flush()
-        process = output.get("process")
+        process = result_dict.get("process")
         if process:
             try:
                 process.terminate()
                 process.wait(timeout=3)
             except Exception:
                 process.kill()
-        output['result'] = f'${args.command}\\nKilled by user'
-    return output.get('result', f'${args.command}\\nNo result')
+        result_dict['result'] = f'${args.command}\\nKilled by user'
+    
+    return result_dict.get('result', f'${args.command}\\nNo result')
 
 
 def ask_followup_question(args: AskFollowupQuestion):
