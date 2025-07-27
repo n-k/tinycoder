@@ -444,6 +444,7 @@ def execute_command(args: ExecuteCommand) -> str:
         if not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
             return f'User rejected running this command: {args.command}'
     def _run_command(command, output_dict):
+        time.sleep(10)
         error_label = 'Error while running command'
         success_label = 'Command ran successfully'
         try:
@@ -453,10 +454,24 @@ def execute_command(args: ExecuteCommand) -> str:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
+                bufsize=1,
+                universal_newlines=True
             )
-            output['process'] = process
-            stdout, _ = process.communicate()
+            output_dict['process'] = process
+            output_lines = []
+            
+            # Read output line by line as it's generated
+            if process.stdout:
+                for line in iter(process.stdout.readline, ''):
+                    output_lines.append(line.rstrip())
+                    # Signal that we have new output
+                    output_dict['new_output'] = line.rstrip()
+                    output_dict['has_new_output'] = True
+            
+            process.wait()
             output_dict['code'] = process.returncode
+            stdout = '\n'.join(output_lines)
+            
             if process.returncode == 0: 
                 label = success_label 
             else:
@@ -464,7 +479,7 @@ def execute_command(args: ExecuteCommand) -> str:
             output_dict['result'] = f"${command}\\n{label}\\n{stdout}"
         except subprocess.CalledProcessError as e:
             output_dict['code'] = 1
-            output_dict['result'] = f"${command}\\n{error_label}\\n{stdout}"
+            output_dict['result'] = f"${command}\\n{error_label}\\n"
     output = {}
     thread = threading.Thread(
         target=_run_command, args=(args.command, output), 
@@ -472,28 +487,49 @@ def execute_command(args: ExecuteCommand) -> str:
     thread.start()
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
     label = f'[Ctrl+C to kill] ${commands[0]} ...'
+    spinner_line_active = True
+    
     try:
         while thread.is_alive():
-            sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
-            sys.stdout.flush()
+            # Check if there's new output to print
+            if output.get('has_new_output', False):
+                # Clear the spinner line and print the output
+                if spinner_line_active:
+                    sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
+                print(output.get('new_output', ''))
+                output['has_new_output'] = False
+                spinner_line_active = False
+            else:
+                # Show spinner if no new output
+                if not spinner_line_active:
+                    spinner_line_active = True
+                sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+                sys.stdout.flush()
             time.sleep(0.1)
+        
         thread.join()
-        if output["code"] == 0:
-            sys.stdout.write(f"\r[✅] {label}\n")
+        
+        # Clear spinner line before showing final status
+        if spinner_line_active:
+            sys.stdout.write(f"\r{' ' * 80}\r")
+        
+        if output.get("code", 1) == 0:
+            sys.stdout.write(f"[✅] {label}\n")
         else:
-            sys.stdout.write(f"\r[❌] {label}\n")
+            sys.stdout.write(f"[❌] {label}\n")
         sys.stdout.flush()
     except KeyboardInterrupt:
-        sys.stdout.write("\r[✖️] Interrupted\n")
+        sys.stdout.write(f"\r{' ' * 80}\r[✖️] Interrupted\n")
         sys.stdout.flush()
-        if output["process"]:
+        process = output.get("process")
+        if process:
             try:
-                output["process"].terminate()
-                output["process"].wait(timeout=3)
+                process.terminate()
+                process.wait(timeout=3)
             except Exception:
-                output["process"].kill()
+                process.kill()
         output['result'] = f'${args.command}\\nKilled by user'
-    return output['result']
+    return output.get('result', f'${args.command}\\nNo result')
 
 
 def ask_followup_question(args: AskFollowupQuestion):
