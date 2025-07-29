@@ -39,7 +39,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 from typing import Optional, List, Any
 
 import bashlex
@@ -71,6 +70,7 @@ SAFE_COMMANDS = {
     'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
     'dirname', 'stat',
 }
+ALLOW_ALL = os.environ.get('ALLOW_ALL_COMMAND', '').lower() == 'true'
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
@@ -196,8 +196,12 @@ _deactivate_tiny_coder() {{
     unset -f _deactivate_tiny_coder
     unset -f _edit_and_message
     rm -f {log_file_path}
+    trap - EXIT
+    trap - INT TERM 
 }}
 PS1="[✨ai] $PS1"
+trap _deactivate_tiny_coder EXIT
+trap _deactivate_tiny_coder INT TERM
 """
     print(shell_script)
 
@@ -264,10 +268,10 @@ def _get_client():
                   file=sys.stderr)
             sys.exit(1)
         llm = ChatOpenAI(
+            # api_key=os.environ.get("OPENROUTER_API_KEY", None),
             api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            openai_api_key=os.environ.get("OPENROUTER_API_KEY", None),  # type: ignore
-            openai_api_base="https://openrouter.ai/api/v1",  # type: ignore
-            model_name=model_name or 'qwen/qwen3-coder:free',  # type: ignore
+            openai_api_base=os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+            model_name=model_name or 'qwen/qwen3-coder:free',
         )
     elif model_provider == 'google':
         if os.environ.get("GOOGLE_API_KEY", None) is None:
@@ -309,7 +313,12 @@ def _make_progress(messages):
     # user_input: str = ""
     skip_input = True
     client = _get_client()
+    num_skips = 0
     while skip_input:
+        num_skips = num_skips + 1
+        if num_skips > 10:
+            if not input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") == 'y':
+                break
         # reset skip for next round
         skip_input = False
         response: Any = client.invoke(messages)
@@ -370,6 +379,9 @@ class ExecuteCommand(BaseModel):
     This tool can be used to list files using `ls` command.
     This tool can be used to find text in files using `grep` command.
     This tool can be used to replace text in a file using the `sed` command.
+        Note: when using `sed` for editing contents of a file, you must always
+        replace entire lines or blocks of lines, even if you have to edit a small 
+        portion of a line or small potions of multiple lines.
 
     Args:
     - command: (required) The CLI command to execute. This should be valid for the current operating system. 
@@ -385,8 +397,6 @@ class ExecuteCommand(BaseModel):
     execute_command(command="cat path/to/the/file")
     Example - create file:
     execute_command(command="touch path/to/the/file")
-    Example - delete file:
-    execute_command(command="rm path/to/the/file")
     """
 
     command: str = Field(
@@ -442,7 +452,7 @@ def execute_command(args: ExecuteCommand) -> str:
         walker.visit(t)
     commands = walker.commands
     if not all(cmd in SAFE_COMMANDS for cmd in commands):
-        if not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
+        if not ALLOW_ALL and not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
             return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
         error_label = 'Error while running command'
@@ -471,7 +481,6 @@ def execute_command(args: ExecuteCommand) -> str:
             process.wait()
             result_dict['code'] = process.returncode
             stdout = '\n'.join(output_lines)
-            
             if process.returncode == 0: 
                 label = success_label 
             else:
@@ -480,7 +489,6 @@ def execute_command(args: ExecuteCommand) -> str:
             
             # Signal completion
             output_queue.put(('done', result_dict['code']))
-            
         except:
             result_dict['code'] = 1
             result_dict['result'] = f"${command}\\n{error_label}\\n"
@@ -496,7 +504,7 @@ def execute_command(args: ExecuteCommand) -> str:
     thread.start()
     
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    label = f'[Ctrl+C to kill] ${commands[0]} ...'
+    label = f'${args.command[:50].replace("\n", " ").replace("\r", " ")} ...'
     command_finished = False
     sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
     sys.stdout.flush()
@@ -509,13 +517,13 @@ def execute_command(args: ExecuteCommand) -> str:
                 if msg_type == 'output':
                     sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
                     print(data)
-                    sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+                    sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                     sys.stdout.flush()
                 elif msg_type == 'done':
                     command_finished = True
                     result_dict['code'] = data
             except queue.Empty:
-                sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
+                sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                 sys.stdout.flush()
         
         thread.join()
