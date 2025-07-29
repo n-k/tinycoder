@@ -255,7 +255,7 @@ def _get_client():
         SystemExit: If required API keys are not set for the selected provider.
     """
     model_provider = os.environ.get("MODEL_PROVIDER", 'openrouter')
-    model_name = os.environ.get("MODEL_NAME", 'qwen/qwen3-coder:free')
+    model_name = os.environ.get("MODEL_NAME")
 
     llm = None
     if model_provider == 'openrouter':
@@ -267,7 +267,7 @@ def _get_client():
             api_key=os.environ.get("OPENROUTER_API_KEY", None),
             openai_api_key=os.environ.get("OPENROUTER_API_KEY", None),  # type: ignore
             openai_api_base="https://openrouter.ai/api/v1",  # type: ignore
-            model_name=model_name,  # type: ignore
+            model_name=model_name or 'qwen/qwen3-coder:free',  # type: ignore
         )
     elif model_provider == 'google':
         if os.environ.get("GOOGLE_API_KEY", None) is None:
@@ -277,7 +277,7 @@ def _get_client():
     elif model_provider == 'ollama':
         llm = ChatOllama(
             base_url=os.environ.get("OLLAMA_BASE_URL", 'localhost'),
-            model=model_name,
+            model=model_name or 'qwen2.5-coder:14b-instruct',
             format="json",
         )
     else:
