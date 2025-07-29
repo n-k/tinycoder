@@ -319,6 +319,8 @@ def _make_progress(messages):
         if num_skips > 10:
             if not input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") == 'y':
                 break
+            else:
+                num_skips = 0
         # reset skip for next round
         skip_input = False
         response: Any = client.invoke(messages)
@@ -444,14 +446,19 @@ def execute_command(args: ExecuteCommand) -> str:
                 if parts[0].kind == 'word':
                     self.commands.append(parts[0].word)
             return True # visit children
-    tree = bashlex.parse(args.command)
-    if not isinstance(tree, list):
-        tree = [tree]
-    walker = Walker()
-    for t in tree:
-        walker.visit(t)
-    commands = walker.commands
-    if not all(cmd in SAFE_COMMANDS for cmd in commands):
+    try:
+        tree = bashlex.parse(args.command)
+        if not isinstance(tree, list):
+            tree = [tree]
+        walker = Walker()
+        for t in tree:
+            walker.visit(t)
+        commands = walker.commands
+        is_safe = all(cmd in SAFE_COMMANDS for cmd in commands)
+    except:
+        print('Could not parse command, please review it manually')
+        is_safe = False
+    if not is_safe:
         if not ALLOW_ALL and not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
             return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
