@@ -20,6 +20,8 @@
 # ]
 # ///
 
+# pyright: reportMissingImports=false
+
 """
 TinyCoder AI Code Assistant
 =============================
