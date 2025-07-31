@@ -4,20 +4,26 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # Copyright (c) 2025 Nipun Kumar
+
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "pydantic",
-#   "langchain-core",
+#   "bashlex",
 #   "langchain-community",
+#   "langchain-core",
 #   "langchain-google-genai",
 #   "langchain-ollama",
 #   "langchain-openai",
 #   "py-jsonl",
+#   "pydantic",
+#   "python-decouple",
 #   "requests",
-#   "bashlex",
 # ]
+# [tool.uv]
+# exclude-newer = "2025-08-01T00:00:00Z"
 # ///
+
+# pyright: reportMissingImports=false
 
 """
 TinyCoder AI Code Assistant
@@ -26,60 +32,84 @@ TinyCoder AI Code Assistant
 
 import argparse
 import asyncio
+import bashlex
+import contextlib
 import datetime
-import os
 import itertools
 import json
 import jsonl
+import os
 import queue
 import requests
 import secrets
+import signal
 import string
 import subprocess
 import sys
 import tempfile
 import threading
-from typing import Optional, List, Any
-
-import bashlex
-
-from pydantic import BaseModel, Field
-
 from langchain_core.messages import (
-    message_to_dict,
-    messages_from_dict,
     BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    message_to_dict,
+    messages_from_dict,
 )
-from langchain_ollama.chat_models import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
+from pathlib import Path
+from pydantic import BaseModel, Field
+from textwrap import dedent
+from typing import Any, Optional
 
-
-SCRIPT_PATH = os.path.abspath(__file__)
-SYSTEM_PROMPT = """\
-You are a seasoned unix hacker and programmer.
-You do EVERYTHING using the command line and with standard unix tools like
-    ls, cat, grep, sed, awk, find ...
-====
-"""
+SCRIPT_PATH = str(Path(__file__).resolve()).replace(str(Path.home()), '~')
+SYSTEM_PROMPT = dedent("""\
+    You are a seasoned unix hacker and programmer.
+    You do EVERYTHING using the command line and with standard unix tools like
+        ls, cat, grep, sed, awk, find ...
+    ====
+    """
+)
 SAFE_COMMANDS = {
     'ls', 'find', 'grep', 'echo', 'cat', 'pwd', 'which', 'whoami',
     'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
     'dirname', 'stat',
 }
-ALLOW_ALL = os.environ.get('ALLOW_ALL_COMMAND', '').lower() == 'true'
+
+
+def _get_config():
+    """
+    Get configuration using decouple, checking for .env file first.
+
+    Returns:
+        config: A decouple config instance for retrieving environment variables.
+    """
+    from decouple import Config, RepositoryEnv, config as default_config
+
+    env_file = Path.cwd() / '.env'
+    if env_file.exists():
+        # When .env exists, only use values from it (ignore shell env vars)
+        return Config(RepositoryEnv(str(env_file)))
+    else:
+        # When no .env file, use default behavior (env vars + search for .env up the tree)
+        return default_config
+
+
+# Initialize config (will be refreshed on each message call)
+config = _get_config()
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
-    """Create and configure the argument parser for the CLI tool.
+    """
+    Create and configure the argument parser for the CLI tool.
 
     Returns:
         argparse.ArgumentParser: Configured argument parser with subcommands
             for initializing shell environment and sending messages.
     """
+    global SCRIPT_PATH
     parser = argparse.ArgumentParser(
         description="AI Assistant CLI Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -92,10 +122,11 @@ def _get_command_parser() -> argparse.ArgumentParser:
     # init_shell subcommand
     subparsers.add_parser(
         "init_shell",
-        help="""Initialize shell environment
-        This command should be called as:
-        source <(path/to/script.py init_shell)
-        """
+        help=dedent(f"""\
+            Initialize shell environment
+            This command should be called as:
+            source <({SCRIPT_PATH} init_shell)
+            """).strip()
     )
 
     # message subcommand
@@ -111,7 +142,8 @@ def _get_command_parser() -> argparse.ArgumentParser:
 
 
 async def main():
-    """Main entry point for the CLI tool.
+    """
+    Main entry point for the CLI tool.
 
     Parses command line arguments and routes to the appropriate function
     based on the subcommand provided (init_shell or message).
@@ -134,10 +166,7 @@ def find_free():
         if 'tools' not in params:
             return False
         pricing = model.get("pricing", {})
-        for k in pricing:
-            if not pricing[k] == '0':
-                return False
-        return True
+        return all(pricing[k] == '0' for k in pricing)
     response = requests.get("https://openrouter.ai/api/v1/models")
     models = response.json().get('data', [])
     free_tool_models = [
@@ -149,65 +178,78 @@ def find_free():
 
 
 def init_shell():
-    """Initialize the shell environment by generating shell script commands.
+    """
+    Initialize the shell environment by generating shell script commands.
 
     Creates a unique log file for the session and outputs shell configuration
     commands including aliases for AI interaction (ai,aiedit) and deactivation.
     The function sets up shell environment variables and functions needed for
     TinyCoder to operate within the shell.
     """
+    # Ignore SIGPIPE to prevent broken pipe errors when stdout is closed early
+    if hasattr(signal, 'SIGPIPE'):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     temp_dir = tempfile.gettempdir()
     timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
     rand_str = ''.join(secrets.choice(
         string.ascii_letters + string.digits) for _ in range(6))
     log_file_path = os.path.join(
         temp_dir, f"tinycoder_{timestamp}_{rand_str}.jsonl")
-    shell_script = f"""
-    # This command is meant to be run like
-    # source <(path/to/tinycoder.py init_shell)
-if [[ -n "$TINY_CODER_ACTIVE" ]]; then
-    echo "TinyCoder is already active."
-    return 0  || exit 0
-fi
+    shell_script = dedent(f"""
+        # This command is meant to be run like
+        # source <({SCRIPT_PATH} init_shell)
+        if [[ -n "$TINY_CODER_ACTIVE" ]]; then
+            echo "TinyCoder is already active."
+            return 0  || exit 0
+        fi
 
-export TINY_CODER_ACTIVE=1
-alias ai='{SCRIPT_PATH} message $@'
-alias aiedit='_edit_and_message'
-alias deactivate='_deactivate_tiny_coder'
-OLD_PS1=$PS1
-touch {log_file_path}
-export TINY_CODER_LOG_PATH={log_file_path}
-echo Temp chat log file @ {log_file_path}
-_edit_and_message() {{
-  tmpfile=$(mktemp)
-  ${{EDITOR:-vim}} "$tmpfile" || return
-  arg=$(<"$tmpfile")
-  rm "$tmpfile"
-  {SCRIPT_PATH} message "$arg"
-}}
-_deactivate_tiny_coder() {{
-    unalias ai
-    unalias aiedit
-    unalias deactivate
-    PS1="$OLD_PS1"
-    unset TINY_CODER_ACTIVE
-    unset TINY_CODER_LOG_PATH
-    unset OLD_PS1
-    unset -f _deactivate_tiny_coder
-    unset -f _edit_and_message
-    rm -f {log_file_path}
-    trap - EXIT
-    trap - INT TERM 
-}}
-PS1="[✨ai] $PS1"
-trap _deactivate_tiny_coder EXIT
-trap _deactivate_tiny_coder INT TERM
-"""
-    print(shell_script)
+        export TINY_CODER_ACTIVE=1
+        alias ai='{SCRIPT_PATH} message $@'
+        alias aiedit='_edit_and_message'
+        alias deactivate='_deactivate_tiny_coder'
+        OLD_PS1=$PS1
+        touch {log_file_path}
+        export TINY_CODER_LOG_PATH={log_file_path}
+        echo Temp chat log file @ {log_file_path}
+        _edit_and_message() {{
+          tmpfile=$(mktemp)
+          ${{EDITOR:-vim}} "$tmpfile" || return
+          arg=$(<"$tmpfile")
+          rm "$tmpfile"
+          {SCRIPT_PATH} message "$arg"
+        }}
+        _deactivate_tiny_coder() {{
+            unalias ai
+            unalias aiedit
+            unalias deactivate
+            PS1="$OLD_PS1"
+            unset TINY_CODER_ACTIVE
+            unset TINY_CODER_LOG_PATH
+            unset OLD_PS1
+            unset -f _deactivate_tiny_coder
+            unset -f _edit_and_message
+            rm -f {log_file_path}
+            trap - EXIT
+            trap - INT TERM
+        }}
+        PS1="[✨ai] $PS1"
+        trap _deactivate_tiny_coder EXIT
+        trap _deactivate_tiny_coder INT TERM
+    """)
+    try:
+        print(shell_script)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Python's signal handling can cause broken pipe errors to be raised
+        # even when the shell has successfully received all the data.
+        # We can safely ignore this error.
+        pass
 
 
 def message(text):
-    """Process and log a user message, then generate AI response.
+    """
+    Process and log a user message, then generate AI response.
 
     Loads previous conversation from log file, appends the new message,
     and invokes the AI model to generate a response. The conversation
@@ -216,19 +258,24 @@ def message(text):
     Args:
         text (str): The user's message text to be processed.
     """
-    log_file = os.environ.get("TINY_CODER_LOG_PATH", None)
-    if os.environ.get("TINY_CODER_ACTIVE", None) is None or log_file is None:
+    # Refresh config to pick up any changes in .env file
+    global config
+    config = _get_config()
+
+    log_file = config("TINY_CODER_LOG_PATH", default=None)
+    if config("TINY_CODER_ACTIVE", default=None) is None or log_file is None:
         print(
-            """TinyCoder is not active.
-            Did you initialize your shell with `source <(path/to/tinycoder.py 
-            init_shell)` ?
-            """,
+            dedent(f"""\
+                TinyCoder is not active.
+
+                Did you initialize your shell with `source <({SCRIPT_PATH} init_shell)` ?
+                """),
             file=sys.stderr,
         )
         return
     log = jsonl.load(log_file)
     log = list(log)
-    messages: List[BaseMessage] = []
+    messages: list[BaseMessage] = []
     for d in log:
         m = messages_from_dict([d])
         messages.append(m[0])
@@ -240,7 +287,8 @@ def message(text):
 
 
 def get_cwd() -> str:
-    """Get the current working directory.
+    """
+    Get the current working directory.
 
     Returns:
         str: The absolute path of the current working directory.
@@ -249,7 +297,8 @@ def get_cwd() -> str:
 
 
 def _get_client():
-    """Initialize and configure the appropriate LLM client based on environment settings.
+    """
+    Initialize and configure the appropriate LLM client based on environment settings.
     Configures the client with tool binding for command execution and user interaction.
 
     Returns:
@@ -258,29 +307,34 @@ def _get_client():
     Raises:
         SystemExit: If required API keys are not set for the selected provider.
     """
-    model_provider = os.environ.get("MODEL_PROVIDER", 'openrouter')
-    model_name = os.environ.get("MODEL_NAME")
+    # Ensure we're using the latest config values
+    model_provider = config("MODEL_PROVIDER", default='openrouter')
+    model_name = config("MODEL_NAME", default=None)
 
     llm = None
     if model_provider == 'openrouter':
-        if os.environ.get("OPENROUTER_API_KEY", None) is None:
+        api_key = config("OPENROUTER_API_KEY", default=None)
+        if api_key is None:
             print('You must set OPENROUTER_API_KEY environment variable',
                   file=sys.stderr)
             sys.exit(1)
         llm = ChatOpenAI(
-            # api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            openai_api_base=os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+            api_key=api_key,
+            openai_api_base=config("OPENROUTER_API_BASE", default="https://openrouter.ai/api/v1"),
             model_name=model_name or 'qwen/qwen3-coder:free',
         )
     elif model_provider == 'google':
-        if os.environ.get("GOOGLE_API_KEY", None) is None:
+        api_key = config("GOOGLE_API_KEY", default=None)
+        if api_key is None:
             print('You must set GOOGLE_API_KEY environment variable', file=sys.stderr)
             sys.exit(1)
-        llm = ChatGoogleGenerativeAI(model=model_name or "gemini-2.0-flash")
+        llm = ChatGoogleGenerativeAI(
+            api_key=api_key,
+            model=model_name or "gemini-2.0-flash"
+        )
     elif model_provider == 'ollama':
         llm = ChatOllama(
-            base_url=os.environ.get("OLLAMA_BASE_URL", 'localhost'),
+            base_url=config("OLLAMA_BASE_URL", default='localhost'),
             model=model_name or 'qwen2.5-coder:14b-instruct',
             format="json",
         )
@@ -298,7 +352,8 @@ def _get_client():
 
 
 def _make_progress(messages):
-    """Process messages through the LLM and handle tool calls.
+    """
+    Process messages through the LLM and handle tool calls.
 
     Sends messages to the LLM and processes any tool calls in the response.
     Handles both direct tool calls and tool calls embedded in the response content.
@@ -317,13 +372,49 @@ def _make_progress(messages):
     while skip_input:
         num_skips = num_skips + 1
         if num_skips > 10:
-            if not input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") == 'y':
+            if input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") != 'y':
                 break
             else:
                 num_skips = 0
         # reset skip for next round
         skip_input = False
-        response: Any = client.invoke(messages)
+        try:
+            response: Any = client.invoke(messages)
+        except Exception as e:
+            # Check if this is an Ollama model not found error
+            if hasattr(e, '__class__') and e.__class__.__name__ == 'ResponseError':
+                error_msg = str(e)
+                if 'not found, try pulling it first' in error_msg and config("MODEL_PROVIDER", default='openrouter') == 'ollama':
+                    # Extract model name from error message
+                    model_name = config("MODEL_NAME", default='qwen2.5-coder:14b-instruct')
+                    print(f"Model '{model_name}' not found. Pulling it now...")
+
+                    # Pull the model using subprocess
+                    try:
+                        result = subprocess.run(
+                            ['ollama', 'pull', model_name],
+                            capture_output=True,
+                            text=True,
+                            check=False
+                        )
+
+                        if result.returncode == 0:
+                            print(f"Successfully pulled model '{model_name}'")
+                            # Retry the invoke after pulling the model
+                            response = client.invoke(messages)
+                        else:
+                            print(f"Failed to pull model: {result.stderr}", file=sys.stderr)
+                            raise
+                    except FileNotFoundError:
+                        print("Ollama command not found. Please ensure Ollama is installed and in your PATH.", file=sys.stderr)
+                        raise
+                    except Exception as pull_error:
+                        print(f"Error pulling model: {pull_error}", file=sys.stderr)
+                        raise
+                else:
+                    raise
+            else:
+                raise
         messages.append(response)
         tool_calls = []
         if len(response.tool_calls) > 0:
@@ -331,12 +422,9 @@ def _make_progress(messages):
         else:
             # maybe content is tool call json?
             content = response.content
-            _parsed = None
             if isinstance(content, str):
-                try:
+                with contextlib.suppress(Exception):
                     _parsed = json.loads(content)
-                except:
-                    pass
             elif isinstance(content, dict):
                 _parsed = content
             if (
@@ -374,7 +462,8 @@ def _make_progress(messages):
 
 
 class ExecuteCommand(BaseModel):
-    """Request to execute a CLI command on the system.
+    """
+    Request to execute a CLI command on the system.
 
     Use this for EVERYTHING. Some ideas are:
     This tool can be used to create or overwrite files using `echo` or `touch` commands.
@@ -382,11 +471,11 @@ class ExecuteCommand(BaseModel):
     This tool can be used to find text in files using `grep` command.
     This tool can be used to replace text in a file using the `sed` command.
         Note: when using `sed` for editing contents of a file, you must always
-        replace entire lines or blocks of lines, even if you have to edit a small 
+        replace entire lines or blocks of lines, even if you have to edit a small
         portion of a line or small potions of multiple lines.
 
     Args:
-    - command: (required) The CLI command to execute. This should be valid for the current operating system. 
+    - command: (required) The CLI command to execute. This should be valid for the current operating system.
         Ensure the command is properly formatted and does not contain any harmful instructions.
 
     Typical usage examples:
@@ -408,7 +497,8 @@ class ExecuteCommand(BaseModel):
 
 
 class AskFollowupQuestion(BaseModel):
-    """Ask the user a question to gather additional information needed to complete the task.
+    """
+    Ask the user a question to gather additional information needed to complete the task.
 
     This tool should be used to ask for clarifications about the current task only.
     You must avoid conversation if possible.
@@ -416,16 +506,17 @@ class AskFollowupQuestion(BaseModel):
 
     question: str = Field(
         ...,
-        description=f"The question to ask the user. This should be a clear, specific question that addresses the information you need.",
+        description="The question to ask the user. This should be a clear, specific question that addresses the information you need.",
     )
-    options: Optional[List[str]] = Field(
+    options: list[str] | None = Field(
         None,
-        description=f"An array of 2-5 options for the user to choose from. Each option should be a string describing a possible answer. You may not always need to provide options, but it may be helpful in many cases where it can save the user from having to type out a response manually. IMPORTANT: NEVER include an option to toggle to Act mode, as this would be something you need to direct the user to do manually themselves if needed.",
+        description="An array of 2-5 options for the user to choose from. Each option should be a string describing a possible answer. You may not always need to provide options, but it may be helpful in many cases where it can save the user from having to type out a response manually. IMPORTANT: NEVER include an option to toggle to Act mode, as this would be something you need to direct the user to do manually themselves if needed.",
     )
 
 
 def execute_command(args: ExecuteCommand) -> str:
-    """Execute a CLI command on the system and return its output.
+    """
+    Execute a CLI command on the system and return its output.
 
     Runs the specified command using subprocess and captures its output.
     Handles both successful execution and errors, returning appropriate results.
@@ -440,11 +531,10 @@ def execute_command(args: ExecuteCommand) -> str:
         def __init__(self):
             super().__init__()
             self.commands = []
-        
+
         def visitcommand(self, n, parts):
-            if len(parts) > 0:
-                if parts[0].kind == 'word':
-                    self.commands.append(parts[0].word)
+            if len(parts) > 0 and parts[0].kind == 'word':
+                self.commands.append(parts[0].word)
             return True # visit children
     try:
         tree = bashlex.parse(args.command)
@@ -455,12 +545,13 @@ def execute_command(args: ExecuteCommand) -> str:
             walker.visit(t)
         commands = walker.commands
         is_safe = all(cmd in SAFE_COMMANDS for cmd in commands)
-    except:
-        print('Could not parse command, please review it manually')
+    except Exception as e:
+        print(f'Could not parse command, please review it manually: {e}')
         is_safe = False
-    if not is_safe:
-        if not ALLOW_ALL and not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
-            return f'User rejected running this command: {args.command}'
+    # Get ALLOW_ALL from config dynamically
+    allow_all = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
+    if not is_safe and not allow_all and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
+        return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
         error_label = 'Error while running command'
         success_label = 'Command ran successfully'
@@ -476,7 +567,7 @@ def execute_command(args: ExecuteCommand) -> str:
             )
             result_dict['process'] = process
             output_lines = []
-            
+
             # Read output line by line as it's generated
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
@@ -484,34 +575,32 @@ def execute_command(args: ExecuteCommand) -> str:
                     output_lines.append(line_stripped)
                     # Send output line through the queue
                     output_queue.put(('output', line_stripped))
-            
+
             process.wait()
             result_dict['code'] = process.returncode
             stdout = '\n'.join(output_lines)
-            if process.returncode == 0: 
-                label = success_label 
-            else:
-                label = error_label
+            label = success_label if process.returncode == 0 else error_label
             result_dict['result'] = f"${command}\\n{label}\\n{stdout}"
-            
+
             # Signal completion
             output_queue.put(('done', result_dict['code']))
-        except:
+        except Exception as e:
             result_dict['code'] = 1
-            result_dict['result'] = f"${command}\\n{error_label}\\n"
+            result_dict['result'] = f"${command}\\n{error_label}\\n{str(e)}"
             output_queue.put(('done', 1))
-    
+
     # Create queue for thread communication
     output_queue = queue.Queue()
     result_dict = {}
-    
+
     thread = threading.Thread(
-        target=_run_command, args=(args.command, output_queue, result_dict), 
+        target=_run_command, args=(args.command, output_queue, result_dict),
         daemon=True)
     thread.start()
-    
+
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    label = f'${args.command[:50].replace("\n", " ").replace("\r", " ")} ...'
+    command_preview = args.command[:50].replace("\n", " ").replace("\r", " ")
+    label = f'${command_preview} ...'
     command_finished = False
     sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
     sys.stdout.flush()
@@ -520,7 +609,7 @@ def execute_command(args: ExecuteCommand) -> str:
             try:
                 # Check for new output with a short timeout
                 msg_type, data = output_queue.get(timeout=0.1)
-                
+
                 if msg_type == 'output':
                     sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
                     print(data)
@@ -532,18 +621,18 @@ def execute_command(args: ExecuteCommand) -> str:
             except queue.Empty:
                 sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                 sys.stdout.flush()
-        
+
         thread.join()
-        
+
         # Clear spinner line before showing final status
         sys.stdout.write(f"\r{' ' * 80}\r")
-        
+
         if result_dict.get("code", 1) == 0:
             sys.stdout.write(f"[✅] {label}\n")
         else:
             sys.stdout.write(f"[❌] {label}\n")
         sys.stdout.flush()
-        
+
     except KeyboardInterrupt:
         sys.stdout.write(f"\r{' ' * 80}\r[✖️] Interrupted\n")
         sys.stdout.flush()
@@ -555,12 +644,13 @@ def execute_command(args: ExecuteCommand) -> str:
             except Exception:
                 process.kill()
         result_dict['result'] = f'${args.command}\\nKilled by user'
-    
+
     return result_dict.get('result', f'${args.command}\\nNo result')
 
 
 def ask_followup_question(args: AskFollowupQuestion):
-    """Present a question to the user for additional information.
+    """
+    Present a question to the user for additional information.
 
     Formats and displays a question to the user, along with optional answer choices.
     Used when the AI needs clarification to complete a task.
@@ -578,7 +668,8 @@ def ask_followup_question(args: AskFollowupQuestion):
 
 
 def run_tool(name, args):
-    """Execute a tool by name with the provided arguments.
+    """
+    Execute a tool by name with the provided arguments.
 
     Args:
         name (str): The name of the tool to execute.
