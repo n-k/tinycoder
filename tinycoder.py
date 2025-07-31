@@ -365,7 +365,43 @@ def _make_progress(messages):
                 num_skips = 0
         # reset skip for next round
         skip_input = False
-        response: Any = client.invoke(messages)
+        try:
+            response: Any = client.invoke(messages)
+        except Exception as e:
+            # Check if this is an Ollama model not found error
+            if hasattr(e, '__class__') and e.__class__.__name__ == 'ResponseError':
+                error_msg = str(e)
+                if 'not found, try pulling it first' in error_msg and config("MODEL_PROVIDER", default='openrouter') == 'ollama':
+                    # Extract model name from error message
+                    model_name = config("MODEL_NAME", default='qwen2.5-coder:14b-instruct')
+                    print(f"Model '{model_name}' not found. Pulling it now...")
+                    
+                    # Pull the model using subprocess
+                    try:
+                        result = subprocess.run(
+                            ['ollama', 'pull', model_name],
+                            capture_output=True,
+                            text=True,
+                            check=False
+                        )
+                        
+                        if result.returncode == 0:
+                            print(f"Successfully pulled model '{model_name}'")
+                            # Retry the invoke after pulling the model
+                            response = client.invoke(messages)
+                        else:
+                            print(f"Failed to pull model: {result.stderr}", file=sys.stderr)
+                            raise
+                    except FileNotFoundError:
+                        print("Ollama command not found. Please ensure Ollama is installed and in your PATH.", file=sys.stderr)
+                        raise
+                    except Exception as pull_error:
+                        print(f"Error pulling model: {pull_error}", file=sys.stderr)
+                        raise
+                else:
+                    raise
+            else:
+                raise
         messages.append(response)
         tool_calls = []
         if len(response.tool_calls) > 0:
