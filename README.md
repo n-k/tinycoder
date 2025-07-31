@@ -44,7 +44,11 @@ You can also run `tinycoder find_free` to fins current free models on OpenRouter
 ### Example
 
 ```bash
+# naive prompt
 ai list all python files modified in the last 24 hours
+
+# targeted prompt with fragment sentences
+ai list all python files modified in the last 24 hours. ignore .venv and anything in .gitignore
 ```
 
 ## Deactivation
