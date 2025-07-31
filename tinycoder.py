@@ -8,15 +8,16 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "pydantic",
-#   "langchain-core",
+#   "bashlex",
 #   "langchain-community",
+#   "langchain-core",
 #   "langchain-google-genai",
 #   "langchain-ollama",
 #   "langchain-openai",
 #   "py-jsonl",
+#   "pydantic",
+#   "python-decouple",
 #   "requests",
-#   "bashlex",
 # ]
 # [tool.uv]
 # exclude-newer = "2025-08-01T00:00:00Z"

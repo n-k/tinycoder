@@ -51,6 +51,7 @@ pyasn1-modules==0.4.2
 pydantic==2.12.0a1
 pydantic-core==2.37.2
 pydantic-settings==2.10.1
+python-decouple==3.8
 python-dotenv==1.1.1
 pyyaml==6.0.2
 regex==2025.7.34
