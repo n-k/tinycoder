@@ -26,11 +26,13 @@ TinyCoder AI Code Assistant
 
 import argparse
 import asyncio
+import bashlex
+import contextlib
 import datetime
-import os
 import itertools
 import json
 import jsonl
+import os
 import queue
 import requests
 import secrets
@@ -39,24 +41,20 @@ import subprocess
 import sys
 import tempfile
 import threading
-from typing import Optional, List, Any
-
-import bashlex
-
-from pydantic import BaseModel, Field
-
 from langchain_core.messages import (
-    message_to_dict,
-    messages_from_dict,
     BaseMessage,
     HumanMessage,
     SystemMessage,
     ToolMessage,
+    message_to_dict,
+    messages_from_dict,
 )
-from langchain_ollama.chat_models import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
-
+from pydantic import BaseModel, Field
+from textwrap import dedent
+from typing import Any, Optional
 
 SCRIPT_PATH = os.path.abspath(__file__)
 SYSTEM_PROMPT = """\
