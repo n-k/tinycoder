@@ -63,7 +63,7 @@ You can configure the AI model by setting environment variables:
 * `MODEL_PROVIDER`: Set to `ollama` (default), `google`, or `openrouter`.
 * `MODEL_NAME`: Specify the model name (e.g., `qwen2.5-coder:32b-instruct` for Ollama, `gemini-2.5-flash` for Google, or specific models for OpenRouter).
 * `OLLAMA_BASE_URL`: For Ollama, specify the base URL if not `localhost`. E.g. `192.168.1.123`.
-* `GOOGLE_API_KEY`: Your Google API key if using the `google` provider.
+* `GOOGLE_API_KEY`: Your [Google API key](https://aistudio.google.com/apikey) if using the `google` provider.
 * `OPENROUTER_API_KEY`: Your OpenRouter API key if using the `openrouter` provider.
 
 ## License
