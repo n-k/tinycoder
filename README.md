@@ -69,6 +69,10 @@ You can configure the AI model by setting environment variables:
 * `GOOGLE_API_KEY`: Your [Google API key](https://aistudio.google.com/apikey) if using the `google` provider.
 * `OPENROUTER_API_KEY`: Your OpenRouter API key if using the `openrouter` provider.
 
+## TODO
+
+Outstanding tasks can be found in [TODO.md](TODO.md).
+
 ## License
 
 This project is licensed under the [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/).
