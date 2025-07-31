@@ -42,6 +42,7 @@ import os
 import queue
 import requests
 import secrets
+import signal
 import string
 import subprocess
 import sys
@@ -185,6 +186,10 @@ def init_shell():
     The function sets up shell environment variables and functions needed for
     TinyCoder to operate within the shell.
     """
+    # Ignore SIGPIPE to prevent broken pipe errors when stdout is closed early
+    if hasattr(signal, 'SIGPIPE'):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     temp_dir = tempfile.gettempdir()
     timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
     rand_str = ''.join(secrets.choice(
@@ -232,7 +237,14 @@ def init_shell():
         trap _deactivate_tiny_coder EXIT
         trap _deactivate_tiny_coder INT TERM
     """)
-    print(shell_script)
+    try:
+        print(shell_script)
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Python's signal handling can cause broken pipe errors to be raised
+        # even when the shell has successfully received all the data.
+        # We can safely ignore this error.
+        pass
 
 
 def message(text):
