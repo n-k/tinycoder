@@ -63,7 +63,7 @@ from pydantic import BaseModel, Field
 from textwrap import dedent
 from typing import Any, Optional
 
-SCRIPT_PATH = os.path.abspath(__file__)
+SCRIPT_PATH = str(Path(__file__).resolve()).replace(str(Path.home()), '~')
 SYSTEM_PROMPT = dedent("""\
     You are a seasoned unix hacker and programmer.
     You do EVERYTHING using the command line and with standard unix tools like
@@ -86,7 +86,7 @@ def _get_config():
         config: A decouple config instance for retrieving environment variables.
     """
     from decouple import Config, RepositoryEnv, config as default_config
-    
+
     env_file = Path.cwd() / '.env'
     if env_file.exists():
         # When .env exists, only use values from it (ignore shell env vars)
@@ -108,6 +108,7 @@ def _get_command_parser() -> argparse.ArgumentParser:
         argparse.ArgumentParser: Configured argument parser with subcommands
             for initializing shell environment and sending messages.
     """
+    global SCRIPT_PATH
     parser = argparse.ArgumentParser(
         description="AI Assistant CLI Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -120,11 +121,11 @@ def _get_command_parser() -> argparse.ArgumentParser:
     # init_shell subcommand
     subparsers.add_parser(
         "init_shell",
-        help=dedent("""\
-        Initialize shell environment
-        This command should be called as:
-        source <(path/to/script.py init_shell)
-        """).strip()
+        help=dedent(f"""\
+            Initialize shell environment
+            This command should be called as:
+            source <({SCRIPT_PATH} init_shell)
+            """).strip()
     )
 
     # message subcommand
@@ -192,7 +193,7 @@ def init_shell():
         temp_dir, f"tinycoder_{timestamp}_{rand_str}.jsonl")
     shell_script = dedent(f"""
         # This command is meant to be run like
-        # source <(path/to/tinycoder.py init_shell)
+        # source <({SCRIPT_PATH} init_shell)
         if [[ -n "$TINY_CODER_ACTIVE" ]]; then
             echo "TinyCoder is already active."
             return 0  || exit 0
@@ -252,11 +253,11 @@ def message(text):
     log_file = config("TINY_CODER_LOG_PATH", default=None)
     if config("TINY_CODER_ACTIVE", default=None) is None or log_file is None:
         print(
-            dedent("""\
-            TinyCoder is not active.
+            dedent(f"""\
+                TinyCoder is not active.
 
-            Did you initialize your shell with `source <(path/to/tinycoder.py init_shell)` ?
-            """),
+                Did you initialize your shell with `source <({SCRIPT_PATH} init_shell)` ?
+                """),
             file=sys.stderr,
         )
         return
@@ -375,7 +376,7 @@ def _make_progress(messages):
                     # Extract model name from error message
                     model_name = config("MODEL_NAME", default='qwen2.5-coder:14b-instruct')
                     print(f"Model '{model_name}' not found. Pulling it now...")
-                    
+
                     # Pull the model using subprocess
                     try:
                         result = subprocess.run(
@@ -384,7 +385,7 @@ def _make_progress(messages):
                             text=True,
                             check=False
                         )
-                        
+
                         if result.returncode == 0:
                             print(f"Successfully pulled model '{model_name}'")
                             # Retry the invoke after pulling the model
