@@ -85,20 +85,19 @@ def _get_config():
     Returns:
         config: A decouple config instance for retrieving environment variables.
     """
+    from decouple import Config, RepositoryEnv, config as default_config
+    
     env_file = Path.cwd() / '.env'
     if env_file.exists():
-        from decouple import Config, RepositoryEnv
-        return Config(RepositoryEnv(env_file))
+        # When .env exists, only use values from it (ignore shell env vars)
+        return Config(RepositoryEnv(str(env_file)))
     else:
-        from decouple import config
-        return config
+        # When no .env file, use default behavior (env vars + search for .env up the tree)
+        return default_config
 
 
-# Initialize config
+# Initialize config (will be refreshed on each message call)
 config = _get_config()
-
-# Load configuration values
-ALLOW_ALL = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
@@ -246,6 +245,10 @@ def message(text):
     Args:
         text (str): The user's message text to be processed.
     """
+    # Refresh config to pick up any changes in .env file
+    global config
+    config = _get_config()
+
     log_file = config("TINY_CODER_LOG_PATH", default=None)
     if config("TINY_CODER_ACTIVE", default=None) is None or log_file is None:
         print(
@@ -291,6 +294,7 @@ def _get_client():
     Raises:
         SystemExit: If required API keys are not set for the selected provider.
     """
+    # Ensure we're using the latest config values
     model_provider = config("MODEL_PROVIDER", default='openrouter')
     model_name = config("MODEL_NAME", default=None)
 
@@ -495,7 +499,9 @@ def execute_command(args: ExecuteCommand) -> str:
     except Exception as e:
         print(f'Could not parse command, please review it manually: {e}')
         is_safe = False
-    if not is_safe and not ALLOW_ALL and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
+    # Get ALLOW_ALL from config dynamically
+    allow_all = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
+    if not is_safe and not allow_all and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
         return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
         error_label = 'Error while running command'
