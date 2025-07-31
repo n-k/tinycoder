@@ -4,6 +4,7 @@
 # file, You can obtain one at https://mozilla.org/MPL/2.0/.
 #
 # Copyright (c) 2025 Nipun Kumar
+
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -72,7 +73,8 @@ ALLOW_ALL = os.environ.get('ALLOW_ALL_COMMAND', '').lower() == 'true'
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
-    """Create and configure the argument parser for the CLI tool.
+    """
+    Create and configure the argument parser for the CLI tool.
 
     Returns:
         argparse.ArgumentParser: Configured argument parser with subcommands
@@ -109,7 +111,8 @@ def _get_command_parser() -> argparse.ArgumentParser:
 
 
 async def main():
-    """Main entry point for the CLI tool.
+    """
+    Main entry point for the CLI tool.
 
     Parses command line arguments and routes to the appropriate function
     based on the subcommand provided (init_shell or message).
@@ -147,7 +150,8 @@ def find_free():
 
 
 def init_shell():
-    """Initialize the shell environment by generating shell script commands.
+    """
+    Initialize the shell environment by generating shell script commands.
 
     Creates a unique log file for the session and outputs shell configuration
     commands including aliases for AI interaction (ai,aiedit) and deactivation.
@@ -205,7 +209,8 @@ trap _deactivate_tiny_coder INT TERM
 
 
 def message(text):
-    """Process and log a user message, then generate AI response.
+    """
+    Process and log a user message, then generate AI response.
 
     Loads previous conversation from log file, appends the new message,
     and invokes the AI model to generate a response. The conversation
@@ -238,7 +243,8 @@ def message(text):
 
 
 def get_cwd() -> str:
-    """Get the current working directory.
+    """
+    Get the current working directory.
 
     Returns:
         str: The absolute path of the current working directory.
@@ -247,7 +253,8 @@ def get_cwd() -> str:
 
 
 def _get_client():
-    """Initialize and configure the appropriate LLM client based on environment settings.
+    """
+    Initialize and configure the appropriate LLM client based on environment settings.
     Configures the client with tool binding for command execution and user interaction.
 
     Returns:
@@ -296,7 +303,8 @@ def _get_client():
 
 
 def _make_progress(messages):
-    """Process messages through the LLM and handle tool calls.
+    """
+    Process messages through the LLM and handle tool calls.
 
     Sends messages to the LLM and processes any tool calls in the response.
     Handles both direct tool calls and tool calls embedded in the response content.
@@ -372,7 +380,8 @@ def _make_progress(messages):
 
 
 class ExecuteCommand(BaseModel):
-    """Request to execute a CLI command on the system.
+    """
+    Request to execute a CLI command on the system.
 
     Use this for EVERYTHING. Some ideas are:
     This tool can be used to create or overwrite files using `echo` or `touch` commands.
@@ -380,11 +389,11 @@ class ExecuteCommand(BaseModel):
     This tool can be used to find text in files using `grep` command.
     This tool can be used to replace text in a file using the `sed` command.
         Note: when using `sed` for editing contents of a file, you must always
-        replace entire lines or blocks of lines, even if you have to edit a small 
+        replace entire lines or blocks of lines, even if you have to edit a small
         portion of a line or small potions of multiple lines.
 
     Args:
-    - command: (required) The CLI command to execute. This should be valid for the current operating system. 
+    - command: (required) The CLI command to execute. This should be valid for the current operating system.
         Ensure the command is properly formatted and does not contain any harmful instructions.
 
     Typical usage examples:
@@ -406,7 +415,8 @@ class ExecuteCommand(BaseModel):
 
 
 class AskFollowupQuestion(BaseModel):
-    """Ask the user a question to gather additional information needed to complete the task.
+    """
+    Ask the user a question to gather additional information needed to complete the task.
 
     This tool should be used to ask for clarifications about the current task only.
     You must avoid conversation if possible.
@@ -423,7 +433,8 @@ class AskFollowupQuestion(BaseModel):
 
 
 def execute_command(args: ExecuteCommand) -> str:
-    """Execute a CLI command on the system and return its output.
+    """
+    Execute a CLI command on the system and return its output.
 
     Runs the specified command using subprocess and captures its output.
     Handles both successful execution and errors, returning appropriate results.
@@ -474,7 +485,7 @@ def execute_command(args: ExecuteCommand) -> str:
             )
             result_dict['process'] = process
             output_lines = []
-            
+
             # Read output line by line as it's generated
             if process.stdout:
                 for line in iter(process.stdout.readline, ''):
@@ -482,7 +493,7 @@ def execute_command(args: ExecuteCommand) -> str:
                     output_lines.append(line_stripped)
                     # Send output line through the queue
                     output_queue.put(('output', line_stripped))
-            
+
             process.wait()
             result_dict['code'] = process.returncode
             stdout = '\n'.join(output_lines)
@@ -491,23 +502,23 @@ def execute_command(args: ExecuteCommand) -> str:
             else:
                 label = error_label
             result_dict['result'] = f"${command}\\n{label}\\n{stdout}"
-            
+
             # Signal completion
             output_queue.put(('done', result_dict['code']))
         except:
             result_dict['code'] = 1
             result_dict['result'] = f"${command}\\n{error_label}\\n"
             output_queue.put(('done', 1))
-    
+
     # Create queue for thread communication
     output_queue = queue.Queue()
     result_dict = {}
-    
+
     thread = threading.Thread(
         target=_run_command, args=(args.command, output_queue, result_dict), 
         daemon=True)
     thread.start()
-    
+
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
     label = f'${args.command[:50].replace("\n", " ").replace("\r", " ")} ...'
     command_finished = False
@@ -518,7 +529,7 @@ def execute_command(args: ExecuteCommand) -> str:
             try:
                 # Check for new output with a short timeout
                 msg_type, data = output_queue.get(timeout=0.1)
-                
+
                 if msg_type == 'output':
                     sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
                     print(data)
@@ -530,18 +541,18 @@ def execute_command(args: ExecuteCommand) -> str:
             except queue.Empty:
                 sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                 sys.stdout.flush()
-        
+
         thread.join()
-        
+
         # Clear spinner line before showing final status
         sys.stdout.write(f"\r{' ' * 80}\r")
-        
+
         if result_dict.get("code", 1) == 0:
             sys.stdout.write(f"[✅] {label}\n")
         else:
             sys.stdout.write(f"[❌] {label}\n")
         sys.stdout.flush()
-        
+
     except KeyboardInterrupt:
         sys.stdout.write(f"\r{' ' * 80}\r[✖️] Interrupted\n")
         sys.stdout.flush()
@@ -553,12 +564,13 @@ def execute_command(args: ExecuteCommand) -> str:
             except Exception:
                 process.kill()
         result_dict['result'] = f'${args.command}\\nKilled by user'
-    
+
     return result_dict.get('result', f'${args.command}\\nNo result')
 
 
 def ask_followup_question(args: AskFollowupQuestion):
-    """Present a question to the user for additional information.
+    """
+    Present a question to the user for additional information.
 
     Formats and displays a question to the user, along with optional answer choices.
     Used when the AI needs clarification to complete a task.
@@ -576,7 +588,8 @@ def ask_followup_question(args: AskFollowupQuestion):
 
 
 def run_tool(name, args):
-    """Execute a tool by name with the provided arguments.
+    """
+    Execute a tool by name with the provided arguments.
 
     Args:
         name (str): The name of the tool to execute.
