@@ -138,7 +138,7 @@ def find_free():
         if 'tools' not in params:
             return False
         pricing = model.get("pricing", {})
-        for k in pricing:
+        return all(pricing[k] == '0' for k in pricing)
             if not pricing[k] == '0':
                 return False
         return True
@@ -235,7 +235,7 @@ def message(text):
         return
     log = jsonl.load(log_file)
     log = list(log)
-    messages: List[BaseMessage] = []
+    messages: list[BaseMessage] = []
     for d in log:
         m = messages_from_dict([d])
         messages.append(m[0])
@@ -327,7 +327,7 @@ def _make_progress(messages):
     while skip_input:
         num_skips = num_skips + 1
         if num_skips > 10:
-            if not input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") == 'y':
+            if input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") != 'y':
                 break
             else:
                 num_skips = 0
@@ -343,7 +343,7 @@ def _make_progress(messages):
             content = response.content
             _parsed = None
             if isinstance(content, str):
-                try:
+                with contextlib.suppress(Exception):
                     _parsed = json.loads(content)
                 except:
                     pass
@@ -428,11 +428,11 @@ class AskFollowupQuestion(BaseModel):
 
     question: str = Field(
         ...,
-        description=f"The question to ask the user. This should be a clear, specific question that addresses the information you need.",
+        description="The question to ask the user. This should be a clear, specific question that addresses the information you need.",
     )
-    options: Optional[List[str]] = Field(
+    options: list[str] | None = Field(
         None,
-        description=f"An array of 2-5 options for the user to choose from. Each option should be a string describing a possible answer. You may not always need to provide options, but it may be helpful in many cases where it can save the user from having to type out a response manually. IMPORTANT: NEVER include an option to toggle to Act mode, as this would be something you need to direct the user to do manually themselves if needed.",
+        description="An array of 2-5 options for the user to choose from. Each option should be a string describing a possible answer. You may not always need to provide options, but it may be helpful in many cases where it can save the user from having to type out a response manually. IMPORTANT: NEVER include an option to toggle to Act mode, as this would be something you need to direct the user to do manually themselves if needed.",
     )
 
 
@@ -453,11 +453,10 @@ def execute_command(args: ExecuteCommand) -> str:
         def __init__(self):
             super().__init__()
             self.commands = []
-        
+
         def visitcommand(self, n, parts):
-            if len(parts) > 0:
-                if parts[0].kind == 'word':
-                    self.commands.append(parts[0].word)
+            if len(parts) > 0 and parts[0].kind == 'word':
+                self.commands.append(parts[0].word)
             return True # visit children
     try:
         tree = bashlex.parse(args.command)
@@ -468,12 +467,11 @@ def execute_command(args: ExecuteCommand) -> str:
             walker.visit(t)
         commands = walker.commands
         is_safe = all(cmd in SAFE_COMMANDS for cmd in commands)
-    except:
-        print('Could not parse command, please review it manually')
+    except Exception as e:
+        print(f'Could not parse command, please review it manually: {e}')
         is_safe = False
-    if not is_safe:
-        if not ALLOW_ALL and not input(f"Allow running {args.command} ? [y/n]: ") == 'y':
-            return f'User rejected running this command: {args.command}'
+    if not is_safe and not ALLOW_ALL and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
+        return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
         error_label = 'Error while running command'
         success_label = 'Command ran successfully'
@@ -501,17 +499,14 @@ def execute_command(args: ExecuteCommand) -> str:
             process.wait()
             result_dict['code'] = process.returncode
             stdout = '\n'.join(output_lines)
-            if process.returncode == 0: 
-                label = success_label 
-            else:
-                label = error_label
+            label = success_label if process.returncode == 0 else error_label
             result_dict['result'] = f"${command}\\n{label}\\n{stdout}"
 
             # Signal completion
             output_queue.put(('done', result_dict['code']))
-        except:
+        except Exception as e:
             result_dict['code'] = 1
-            result_dict['result'] = f"${command}\\n{error_label}\\n"
+            result_dict['result'] = f"${command}\\n{error_label}\\n{str(e)}"
             output_queue.put(('done', 1))
 
     # Create queue for thread communication
@@ -519,7 +514,7 @@ def execute_command(args: ExecuteCommand) -> str:
     result_dict = {}
 
     thread = threading.Thread(
-        target=_run_command, args=(args.command, output_queue, result_dict), 
+        target=_run_command, args=(args.command, output_queue, result_dict),
         daemon=True)
     thread.start()
 
