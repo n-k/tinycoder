@@ -18,6 +18,8 @@
 #   "requests",
 #   "bashlex",
 # ]
+# [tool.uv]
+# exclude-newer = "2025-08-01T00:00:00Z"
 # ///
 
 # pyright: reportMissingImports=false
@@ -139,9 +141,6 @@ def find_free():
             return False
         pricing = model.get("pricing", {})
         return all(pricing[k] == '0' for k in pricing)
-            if not pricing[k] == '0':
-                return False
-        return True
     response = requests.get("https://openrouter.ai/api/v1/models")
     models = response.json().get('data', [])
     free_tool_models = [
@@ -341,12 +340,9 @@ def _make_progress(messages):
         else:
             # maybe content is tool call json?
             content = response.content
-            _parsed = None
             if isinstance(content, str):
                 with contextlib.suppress(Exception):
                     _parsed = json.loads(content)
-                except:
-                    pass
             elif isinstance(content, dict):
                 _parsed = content
             if (
