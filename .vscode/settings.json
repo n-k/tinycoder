@@ -25,5 +25,5 @@
       },
       "files.trimTrailingWhitespace": false,
     },
-    "python.defaultInterpreterPath": "/Users/lance/git/tinycoder/.venv/bin/python3",
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python3",
 }
