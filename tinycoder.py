@@ -94,10 +94,11 @@ def _get_command_parser() -> argparse.ArgumentParser:
     # init_shell subcommand
     subparsers.add_parser(
         "init_shell",
-        help="""Initialize shell environment
+        help=dedent("""\
+        Initialize shell environment
         This command should be called as:
         source <(path/to/script.py init_shell)
-        """
+        """).strip()
     )
 
     # message subcommand
@@ -166,47 +167,47 @@ def init_shell():
         string.ascii_letters + string.digits) for _ in range(6))
     log_file_path = os.path.join(
         temp_dir, f"tinycoder_{timestamp}_{rand_str}.jsonl")
-    shell_script = f"""
-    # This command is meant to be run like
-    # source <(path/to/tinycoder.py init_shell)
-if [[ -n "$TINY_CODER_ACTIVE" ]]; then
-    echo "TinyCoder is already active."
-    return 0  || exit 0
-fi
+    shell_script = dedent(f"""
+        # This command is meant to be run like
+        # source <(path/to/tinycoder.py init_shell)
+        if [[ -n "$TINY_CODER_ACTIVE" ]]; then
+            echo "TinyCoder is already active."
+            return 0  || exit 0
+        fi
 
-export TINY_CODER_ACTIVE=1
-alias ai='{SCRIPT_PATH} message $@'
-alias aiedit='_edit_and_message'
-alias deactivate='_deactivate_tiny_coder'
-OLD_PS1=$PS1
-touch {log_file_path}
-export TINY_CODER_LOG_PATH={log_file_path}
-echo Temp chat log file @ {log_file_path}
-_edit_and_message() {{
-  tmpfile=$(mktemp)
-  ${{EDITOR:-vim}} "$tmpfile" || return
-  arg=$(<"$tmpfile")
-  rm "$tmpfile"
-  {SCRIPT_PATH} message "$arg"
-}}
-_deactivate_tiny_coder() {{
-    unalias ai
-    unalias aiedit
-    unalias deactivate
-    PS1="$OLD_PS1"
-    unset TINY_CODER_ACTIVE
-    unset TINY_CODER_LOG_PATH
-    unset OLD_PS1
-    unset -f _deactivate_tiny_coder
-    unset -f _edit_and_message
-    rm -f {log_file_path}
-    trap - EXIT
-    trap - INT TERM 
-}}
-PS1="[✨ai] $PS1"
-trap _deactivate_tiny_coder EXIT
-trap _deactivate_tiny_coder INT TERM
-"""
+        export TINY_CODER_ACTIVE=1
+        alias ai='{SCRIPT_PATH} message $@'
+        alias aiedit='_edit_and_message'
+        alias deactivate='_deactivate_tiny_coder'
+        OLD_PS1=$PS1
+        touch {log_file_path}
+        export TINY_CODER_LOG_PATH={log_file_path}
+        echo Temp chat log file @ {log_file_path}
+        _edit_and_message() {{
+          tmpfile=$(mktemp)
+          ${{EDITOR:-vim}} "$tmpfile" || return
+          arg=$(<"$tmpfile")
+          rm "$tmpfile"
+          {SCRIPT_PATH} message "$arg"
+        }}
+        _deactivate_tiny_coder() {{
+            unalias ai
+            unalias aiedit
+            unalias deactivate
+            PS1="$OLD_PS1"
+            unset TINY_CODER_ACTIVE
+            unset TINY_CODER_LOG_PATH
+            unset OLD_PS1
+            unset -f _deactivate_tiny_coder
+            unset -f _edit_and_message
+            rm -f {log_file_path}
+            trap - EXIT
+            trap - INT TERM
+        }}
+        PS1="[✨ai] $PS1"
+        trap _deactivate_tiny_coder EXIT
+        trap _deactivate_tiny_coder INT TERM
+    """)
     print(shell_script)
 
 
@@ -224,10 +225,11 @@ def message(text):
     log_file = os.environ.get("TINY_CODER_LOG_PATH", None)
     if os.environ.get("TINY_CODER_ACTIVE", None) is None or log_file is None:
         print(
-            """TinyCoder is not active.
-            Did you initialize your shell with `source <(path/to/tinycoder.py 
-            init_shell)` ?
-            """,
+            dedent("""\
+            TinyCoder is not active.
+
+            Did you initialize your shell with `source <(path/to/tinycoder.py init_shell)` ?
+            """),
             file=sys.stderr,
         )
         return
