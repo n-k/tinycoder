@@ -62,12 +62,13 @@ from textwrap import dedent
 from typing import Any, Optional
 
 SCRIPT_PATH = os.path.abspath(__file__)
-SYSTEM_PROMPT = """\
-You are a seasoned unix hacker and programmer.
-You do EVERYTHING using the command line and with standard unix tools like
-    ls, cat, grep, sed, awk, find ...
-====
-"""
+SYSTEM_PROMPT = dedent("""\
+    You are a seasoned unix hacker and programmer.
+    You do EVERYTHING using the command line and with standard unix tools like
+        ls, cat, grep, sed, awk, find ...
+    ====
+    """
+)
 SAFE_COMMANDS = {
     'ls', 'find', 'grep', 'echo', 'cat', 'pwd', 'which', 'whoami',
     'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
