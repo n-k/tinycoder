@@ -58,6 +58,7 @@ from langchain_core.messages import (
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_ollama.chat_models import ChatOllama
 from langchain_openai import ChatOpenAI
+from pathlib import Path
 from pydantic import BaseModel, Field
 from textwrap import dedent
 from typing import Any, Optional
@@ -75,7 +76,29 @@ SAFE_COMMANDS = {
     'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
     'dirname', 'stat',
 }
-ALLOW_ALL = os.environ.get('ALLOW_ALL_COMMAND', '').lower() == 'true'
+
+
+def _get_config():
+    """
+    Get configuration using decouple, checking for .env file first.
+
+    Returns:
+        config: A decouple config instance for retrieving environment variables.
+    """
+    env_file = Path.cwd() / '.env'
+    if env_file.exists():
+        from decouple import Config, RepositoryEnv
+        return Config(RepositoryEnv(env_file))
+    else:
+        from decouple import config
+        return config
+
+
+# Initialize config
+config = _get_config()
+
+# Load configuration values
+ALLOW_ALL = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
 
 
 def _get_command_parser() -> argparse.ArgumentParser:
@@ -223,8 +246,8 @@ def message(text):
     Args:
         text (str): The user's message text to be processed.
     """
-    log_file = os.environ.get("TINY_CODER_LOG_PATH", None)
-    if os.environ.get("TINY_CODER_ACTIVE", None) is None or log_file is None:
+    log_file = config("TINY_CODER_LOG_PATH", default=None)
+    if config("TINY_CODER_ACTIVE", default=None) is None or log_file is None:
         print(
             dedent("""\
             TinyCoder is not active.
@@ -268,29 +291,33 @@ def _get_client():
     Raises:
         SystemExit: If required API keys are not set for the selected provider.
     """
-    model_provider = os.environ.get("MODEL_PROVIDER", 'openrouter')
-    model_name = os.environ.get("MODEL_NAME")
+    model_provider = config("MODEL_PROVIDER", default='openrouter')
+    model_name = config("MODEL_NAME", default=None)
 
     llm = None
     if model_provider == 'openrouter':
-        if os.environ.get("OPENROUTER_API_KEY", None) is None:
+        api_key = config("OPENROUTER_API_KEY", default=None)
+        if api_key is None:
             print('You must set OPENROUTER_API_KEY environment variable',
                   file=sys.stderr)
             sys.exit(1)
         llm = ChatOpenAI(
-            # api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            api_key=os.environ.get("OPENROUTER_API_KEY", None),
-            openai_api_base=os.environ.get("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+            api_key=api_key,
+            openai_api_base=config("OPENROUTER_API_BASE", default="https://openrouter.ai/api/v1"),
             model_name=model_name or 'qwen/qwen3-coder:free',
         )
     elif model_provider == 'google':
-        if os.environ.get("GOOGLE_API_KEY", None) is None:
+        api_key = config("GOOGLE_API_KEY", default=None)
+        if api_key is None:
             print('You must set GOOGLE_API_KEY environment variable', file=sys.stderr)
             sys.exit(1)
-        llm = ChatGoogleGenerativeAI(model=model_name or "gemini-2.0-flash")
+        llm = ChatGoogleGenerativeAI(
+            api_key=api_key,
+            model=model_name or "gemini-2.0-flash"
+        )
     elif model_provider == 'ollama':
         llm = ChatOllama(
-            base_url=os.environ.get("OLLAMA_BASE_URL", 'localhost'),
+            base_url=config("OLLAMA_BASE_URL", default='localhost'),
             model=model_name or 'qwen2.5-coder:14b-instruct',
             format="json",
         )
@@ -517,7 +544,8 @@ def execute_command(args: ExecuteCommand) -> str:
     thread.start()
 
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
-    label = f'${args.command[:50].replace("\n", " ").replace("\r", " ")} ...'
+    command_preview = args.command[:50].replace("\n", " ").replace("\r", " ")
+    label = f'${command_preview} ...'
     command_finished = False
     sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
     sys.stdout.flush()
