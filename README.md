@@ -73,6 +73,14 @@ You can configure the AI model by setting environment variables:
 
 Outstanding tasks can be found in [TODO.md](TODO.md).
 
+## Development
+
+This tool is deliberately a single file. So you can just edit tinycoder.py and test.
+I activate it with `source <(./tinycoder.py init_shell)`, and then edit, and test with `ai ...`.
+
+Note that every time you use `ai` or `aiedit` aliases, the environment variables are read again.
+This enables you to use different models or even providers for different messages.
+
 ## License
 
 This project is licensed under the [Mozilla Public License 2.0](https://www.mozilla.org/MPL/2.0/).

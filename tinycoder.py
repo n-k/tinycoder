@@ -73,6 +73,9 @@ SYSTEM_PROMPT = dedent(
     ====
     """
 )
+# Set of commands I consider safe.
+# It is best to always keep an eye on the actual commands and only use AI tools 
+# in git repos etc.
 SAFE_COMMANDS = {
     "ls",
     "find",
@@ -188,7 +191,7 @@ def find_free():
     models = response.json().get("data", [])
     free_tool_models = [model for model in models if _is_free_w_tools(model)]
 
-    print(f"Found {len(free_tool_models)}")
+    print(f"Found {len(free_tool_models)} free models on OpenRouter")
     for m in free_tool_models:
         print(m.get("id"))
 
@@ -253,16 +256,9 @@ def init_shell():
         PS1="[✨ai] $PS1"
         trap _deactivate_tiny_coder EXIT
         trap _deactivate_tiny_coder INT TERM
-    """
+        """
     )
-    try:
-        print(shell_script)
-        sys.stdout.flush()
-    except BrokenPipeError:
-        # Python's signal handling can cause broken pipe errors to be raised
-        # even when the shell has successfully received all the data.
-        # We can safely ignore this error.
-        pass
+    print(shell_script)
 
 
 def message(text):
