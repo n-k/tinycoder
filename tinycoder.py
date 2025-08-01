@@ -14,16 +14,15 @@
 #   "langchain-google-genai",
 #   "langchain-ollama",
 #   "langchain-openai",
+#   "ollama",
 #   "py-jsonl",
 #   "pydantic",
 #   "python-decouple",
 #   "requests",
 # ]
 # [tool.uv]
-# exclude-newer = "2025-08-01T00:00:00Z"
+# exclude-newer = "2025-01-01T00:00:00Z"
 # ///
-
-# pyright: reportMissingImports=false
 
 """
 TinyCoder AI Code Assistant
@@ -38,6 +37,7 @@ import datetime
 import itertools
 import json
 import jsonl
+import ollama
 import os
 import queue
 import requests
@@ -64,8 +64,9 @@ from pydantic import BaseModel, Field
 from textwrap import dedent
 from typing import Any, Optional
 
-SCRIPT_PATH = str(Path(__file__).resolve()).replace(str(Path.home()), '~')
-SYSTEM_PROMPT = dedent("""\
+SCRIPT_PATH = str(Path(__file__).resolve()).replace(str(Path.home()), "~")
+SYSTEM_PROMPT = dedent(
+    """\
     You are a seasoned unix hacker and programmer.
     You do EVERYTHING using the command line and with standard unix tools like
         ls, cat, grep, sed, awk, find ...
@@ -73,9 +74,24 @@ SYSTEM_PROMPT = dedent("""\
     """
 )
 SAFE_COMMANDS = {
-    'ls', 'find', 'grep', 'echo', 'cat', 'pwd', 'which', 'whoami',
-    'date', 'head', 'tail', 'wc', 'sort', 'uniq', 'diff', 'basename',
-    'dirname', 'stat',
+    "ls",
+    "find",
+    "grep",
+    "echo",
+    "cat",
+    "pwd",
+    "which",
+    "whoami",
+    "date",
+    "head",
+    "tail",
+    "wc",
+    "sort",
+    "uniq",
+    "diff",
+    "basename",
+    "dirname",
+    "stat",
 }
 
 
@@ -88,7 +104,7 @@ def _get_config():
     """
     from decouple import Config, RepositoryEnv, config as default_config
 
-    env_file = Path.cwd() / '.env'
+    env_file = Path.cwd() / ".env"
     if env_file.exists():
         # When .env exists, only use values from it (ignore shell env vars)
         return Config(RepositoryEnv(str(env_file)))
@@ -116,22 +132,22 @@ def _get_command_parser() -> argparse.ArgumentParser:
     )
 
     # Create subparsers for subcommands
-    subparsers = parser.add_subparsers(
-        dest="command", help="Available commands")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # init_shell subcommand
     subparsers.add_parser(
         "init_shell",
-        help=dedent(f"""\
+        help=dedent(
+            f"""\
             Initialize shell environment
             This command should be called as:
             source <({SCRIPT_PATH} init_shell)
-            """).strip()
+            """
+        ).strip(),
     )
 
     # message subcommand
-    message_parser = subparsers.add_parser(
-        "message", help="Send a single message")
+    message_parser = subparsers.add_parser("message", help="Send a single message")
     message_parser.add_argument(
         "text", nargs=argparse.REMAINDER, help="Message text to send"
     )
@@ -162,19 +178,19 @@ async def main():
 
 def find_free():
     def _is_free_w_tools(model):
-        params = model.get('supported_parameters', [])
-        if 'tools' not in params:
+        params = model.get("supported_parameters", [])
+        if "tools" not in params:
             return False
         pricing = model.get("pricing", {})
-        return all(pricing[k] == '0' for k in pricing)
-    response = requests.get("https://openrouter.ai/api/v1/models")
-    models = response.json().get('data', [])
-    free_tool_models = [
-        model for model in models if _is_free_w_tools(model)]
+        return all(pricing[k] == "0" for k in pricing)
 
-    print(f'Found {len(free_tool_models)}')
+    response = requests.get("https://openrouter.ai/api/v1/models")
+    models = response.json().get("data", [])
+    free_tool_models = [model for model in models if _is_free_w_tools(model)]
+
+    print(f"Found {len(free_tool_models)}")
     for m in free_tool_models:
-        print(m.get('id'))
+        print(m.get("id"))
 
 
 def init_shell():
@@ -187,16 +203,17 @@ def init_shell():
     TinyCoder to operate within the shell.
     """
     # Ignore SIGPIPE to prevent broken pipe errors when stdout is closed early
-    if hasattr(signal, 'SIGPIPE'):
+    if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
     temp_dir = tempfile.gettempdir()
-    timestamp = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
-    rand_str = ''.join(secrets.choice(
-        string.ascii_letters + string.digits) for _ in range(6))
-    log_file_path = os.path.join(
-        temp_dir, f"tinycoder_{timestamp}_{rand_str}.jsonl")
-    shell_script = dedent(f"""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    rand_str = "".join(
+        secrets.choice(string.ascii_letters + string.digits) for _ in range(6)
+    )
+    log_file_path = os.path.join(temp_dir, f"tinycoder_{timestamp}_{rand_str}.jsonl")
+    shell_script = dedent(
+        f"""
         # This command is meant to be run like
         # source <({SCRIPT_PATH} init_shell)
         if [[ -n "$TINY_CODER_ACTIVE" ]]; then
@@ -236,7 +253,8 @@ def init_shell():
         PS1="[✨ai] $PS1"
         trap _deactivate_tiny_coder EXIT
         trap _deactivate_tiny_coder INT TERM
-    """)
+    """
+    )
     try:
         print(shell_script)
         sys.stdout.flush()
@@ -265,11 +283,13 @@ def message(text):
     log_file = config("TINY_CODER_LOG_PATH", default=None)
     if config("TINY_CODER_ACTIVE", default=None) is None or log_file is None:
         print(
-            dedent(f"""\
+            dedent(
+                f"""\
                 TinyCoder is not active.
 
                 Did you initialize your shell with `source <({SCRIPT_PATH} init_shell)` ?
-                """),
+                """
+            ),
             file=sys.stderr,
         )
         return
@@ -308,34 +328,60 @@ def _get_client():
         SystemExit: If required API keys are not set for the selected provider.
     """
     # Ensure we're using the latest config values
-    model_provider = config("MODEL_PROVIDER", default='openrouter')
+    model_provider = config("MODEL_PROVIDER", default="ollama")
     model_name = config("MODEL_NAME", default=None)
 
     llm = None
-    if model_provider == 'openrouter':
+    if model_provider == "openrouter":
         api_key = config("OPENROUTER_API_KEY", default=None)
         if api_key is None:
-            print('You must set OPENROUTER_API_KEY environment variable',
-                  file=sys.stderr)
+            print(
+                "You must set OPENROUTER_API_KEY environment variable", file=sys.stderr
+            )
             sys.exit(1)
         llm = ChatOpenAI(
             api_key=api_key,
-            openai_api_base=config("OPENROUTER_API_BASE", default="https://openrouter.ai/api/v1"),
-            model_name=model_name or 'qwen/qwen3-coder:free',
+            openai_api_base=config(
+                "OPENROUTER_API_BASE", default="https://openrouter.ai/api/v1"
+            ),
+            model_name=model_name or "qwen/qwen3-coder:free",
         )
-    elif model_provider == 'google':
+    elif model_provider == "google":
         api_key = config("GOOGLE_API_KEY", default=None)
         if api_key is None:
-            print('You must set GOOGLE_API_KEY environment variable', file=sys.stderr)
+            print("You must set GOOGLE_API_KEY environment variable", file=sys.stderr)
             sys.exit(1)
         llm = ChatGoogleGenerativeAI(
-            api_key=api_key,
-            model=model_name or "gemini-2.0-flash"
+            api_key=api_key, model=model_name or "gemini-2.0-flash"
         )
-    elif model_provider == 'ollama':
+    elif model_provider == "ollama":
+        # let us check if the model is present, if not
+        # we will check env var if we should pull it
+        ollama_url = config("OLLAMA_BASE_URL", default="localhost")
+        ollama_model = (
+            model_name or "hf.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:UD-Q4_K_XL"
+        )
+        ollama_client = ollama.Client(ollama_url)
+        try:
+            _show_res = ollama_client.show(ollama_model)
+        except Exception as e:
+            if (
+                isinstance(e, ollama.ResponseError)
+                and e.status_code == 404
+                and config("OLLAMA_PULL_IF_MISSING", False)
+            ):
+                print(f"Model does not exist in ollama. Pulling {model_name}")
+                ollama_client.pull(model=model_name)
+            else:
+                print(
+                    f"Could not get details about the model from ollama: {e}",
+                    file=sys.stderr,
+                )
+                exit(1)
+
         llm = ChatOllama(
-            base_url=config("OLLAMA_BASE_URL", default='localhost'),
-            model=model_name or 'qwen2.5-coder:14b-instruct',
+            base_url=ollama_url,
+            model=ollama_model,
             format="json",
         )
     else:
@@ -372,49 +418,18 @@ def _make_progress(messages):
     while skip_input:
         num_skips = num_skips + 1
         if num_skips > 10:
-            if input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") != 'y':
+            if (
+                input(
+                    f"Tools have been run without human input {num_skips} times, continue? [y/n]: "
+                )
+                != "y"
+            ):
                 break
             else:
                 num_skips = 0
         # reset skip for next round
         skip_input = False
-        try:
-            response: Any = client.invoke(messages)
-        except Exception as e:
-            # Check if this is an Ollama model not found error
-            if hasattr(e, '__class__') and e.__class__.__name__ == 'ResponseError':
-                error_msg = str(e)
-                if 'not found, try pulling it first' in error_msg and config("MODEL_PROVIDER", default='openrouter') == 'ollama':
-                    # Extract model name from error message
-                    model_name = config("MODEL_NAME", default='qwen2.5-coder:14b-instruct')
-                    print(f"Model '{model_name}' not found. Pulling it now...")
-
-                    # Pull the model using subprocess
-                    try:
-                        result = subprocess.run(
-                            ['ollama', 'pull', model_name],
-                            capture_output=True,
-                            text=True,
-                            check=False
-                        )
-
-                        if result.returncode == 0:
-                            print(f"Successfully pulled model '{model_name}'")
-                            # Retry the invoke after pulling the model
-                            response = client.invoke(messages)
-                        else:
-                            print(f"Failed to pull model: {result.stderr}", file=sys.stderr)
-                            raise
-                    except FileNotFoundError:
-                        print("Ollama command not found. Please ensure Ollama is installed and in your PATH.", file=sys.stderr)
-                        raise
-                    except Exception as pull_error:
-                        print(f"Error pulling model: {pull_error}", file=sys.stderr)
-                        raise
-                else:
-                    raise
-            else:
-                raise
+        response: BaseMessage = client.invoke(messages)
         messages.append(response)
         tool_calls = []
         if len(response.tool_calls) > 0:
@@ -527,15 +542,17 @@ def execute_command(args: ExecuteCommand) -> str:
     Returns:
         str: The command output or error message.
     """
-    class Walker(bashlex.ast.nodevisitor): # type: ignore
+
+    class Walker(bashlex.ast.nodevisitor):  # type: ignore
         def __init__(self):
             super().__init__()
             self.commands = []
 
         def visitcommand(self, n, parts):
-            if len(parts) > 0 and parts[0].kind == 'word':
+            if len(parts) > 0 and parts[0].kind == "word":
                 self.commands.append(parts[0].word)
-            return True # visit children
+            return True  # visit children
+
     try:
         tree = bashlex.parse(args.command)
         if not isinstance(tree, list):
@@ -546,15 +563,20 @@ def execute_command(args: ExecuteCommand) -> str:
         commands = walker.commands
         is_safe = all(cmd in SAFE_COMMANDS for cmd in commands)
     except Exception as e:
-        print(f'Could not parse command, please review it manually: {e}')
+        print(f"Could not parse command, please review it manually: {e}")
         is_safe = False
     # Get ALLOW_ALL from config dynamically
-    allow_all = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
-    if not is_safe and not allow_all and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
-        return f'User rejected running this command: {args.command}'
+    allow_all = config("ALLOW_ALL_COMMAND", default=False, cast=bool)
+    if (
+        not is_safe
+        and not allow_all
+        and input(f"Allow running {args.command} ? [y/n]: ") != "y"
+    ):
+        return f"User rejected running this command: {args.command}"
+
     def _run_command(command, output_queue, result_dict):
-        error_label = 'Error while running command'
-        success_label = 'Command ran successfully'
+        error_label = "Error while running command"
+        success_label = "Command ran successfully"
         try:
             process = subprocess.Popen(
                 command,
@@ -563,44 +585,44 @@ def execute_command(args: ExecuteCommand) -> str:
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                universal_newlines=True
+                universal_newlines=True,
             )
-            result_dict['process'] = process
+            result_dict["process"] = process
             output_lines = []
 
             # Read output line by line as it's generated
             if process.stdout:
-                for line in iter(process.stdout.readline, ''):
+                for line in iter(process.stdout.readline, ""):
                     line_stripped = line.rstrip()
                     output_lines.append(line_stripped)
                     # Send output line through the queue
-                    output_queue.put(('output', line_stripped))
+                    output_queue.put(("output", line_stripped))
 
             process.wait()
-            result_dict['code'] = process.returncode
-            stdout = '\n'.join(output_lines)
+            result_dict["code"] = process.returncode
+            stdout = "\n".join(output_lines)
             label = success_label if process.returncode == 0 else error_label
-            result_dict['result'] = f"${command}\\n{label}\\n{stdout}"
+            result_dict["result"] = f"${command}\\n{label}\\n{stdout}"
 
             # Signal completion
-            output_queue.put(('done', result_dict['code']))
+            output_queue.put(("done", result_dict["code"]))
         except Exception as e:
-            result_dict['code'] = 1
-            result_dict['result'] = f"${command}\\n{error_label}\\n{str(e)}"
-            output_queue.put(('done', 1))
+            result_dict["code"] = 1
+            result_dict["result"] = f"${command}\\n{error_label}\\n{str(e)}"
+            output_queue.put(("done", 1))
 
     # Create queue for thread communication
     output_queue = queue.Queue()
     result_dict = {}
 
     thread = threading.Thread(
-        target=_run_command, args=(args.command, output_queue, result_dict),
-        daemon=True)
+        target=_run_command, args=(args.command, output_queue, result_dict), daemon=True
+    )
     thread.start()
 
     spinner = itertools.cycle("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏")
     command_preview = args.command[:50].replace("\n", " ").replace("\r", " ")
-    label = f'${command_preview} ...'
+    label = f"${command_preview} ..."
     command_finished = False
     sys.stdout.write(f"\r[{next(spinner)}] {label}   ")
     sys.stdout.flush()
@@ -610,14 +632,14 @@ def execute_command(args: ExecuteCommand) -> str:
                 # Check for new output with a short timeout
                 msg_type, data = output_queue.get(timeout=0.1)
 
-                if msg_type == 'output':
+                if msg_type == "output":
                     sys.stdout.write(f"\r{' ' * 80}\r")  # Clear spinner line
                     print(data)
                     sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                     sys.stdout.flush()
-                elif msg_type == 'done':
+                elif msg_type == "done":
                     command_finished = True
-                    result_dict['code'] = data
+                    result_dict["code"] = data
             except queue.Empty:
                 sys.stdout.write(f"\r[{next(spinner)}] [Ctrl+C to kill] {label}   ")
                 sys.stdout.flush()
@@ -643,9 +665,9 @@ def execute_command(args: ExecuteCommand) -> str:
                 process.wait(timeout=3)
             except Exception:
                 process.kill()
-        result_dict['result'] = f'${args.command}\\nKilled by user'
+        result_dict["result"] = f"${args.command}\\nKilled by user"
 
-    return result_dict.get('result', f'${args.command}\\nNo result')
+    return result_dict.get("result", f"${args.command}\\nNo result")
 
 
 def ask_followup_question(args: AskFollowupQuestion):
@@ -661,8 +683,7 @@ def ask_followup_question(args: AskFollowupQuestion):
     Returns:
         None: This function prints the question and returns None.
     """
-    options = "\\n".join(
-        [f"- {opt}" for opt in args.options]) if args.options else ""
+    options = "\\n".join([f"- {opt}" for opt in args.options]) if args.options else ""
     print(f"Question: {args.question}\\n{options}")
     return None
 
