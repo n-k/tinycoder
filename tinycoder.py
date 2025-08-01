@@ -155,6 +155,9 @@ def _get_command_parser() -> argparse.ArgumentParser:
         "text", nargs=argparse.REMAINDER, help="Message text to send"
     )
 
+    # pipe
+    subparsers.add_parser("pipe", help="Read message from stdin")
+
     subparsers.add_parser("find_free", help="Find free models on openrouter")
 
     return parser
@@ -175,6 +178,15 @@ async def main():
         message(" ".join(args.text))
     elif args.command == "find_free":
         find_free()
+    elif args.command == "pipe":
+        try:
+            text = sys.stdin.read()
+        except EOFError:
+            pass
+        except Exception as e:
+            print(f"Warning: Error reading from stdin: {e}", file=sys.stderr)
+            text = ""
+        message(text)
     else:
         _get_command_parser().print_help()
 
@@ -227,6 +239,7 @@ def init_shell():
         export TINY_CODER_ACTIVE=1
         alias ai='{SCRIPT_PATH} message $@'
         alias aiedit='_edit_and_message'
+        alias aipipe="_pipe_message"
         alias deactivate='_deactivate_tiny_coder'
         OLD_PS1=$PS1
         touch {log_file_path}
@@ -238,6 +251,9 @@ def init_shell():
           arg=$(<"$tmpfile")
           rm "$tmpfile"
           {SCRIPT_PATH} message "$arg"
+        }}
+        _pipe_message() {{
+            {SCRIPT_PATH} pipe
         }}
         _deactivate_tiny_coder() {{
             unalias ai
@@ -413,7 +429,7 @@ def _make_progress(messages):
     num_skips = 0
     while skip_input:
         num_skips = num_skips + 1
-        if num_skips > 10:
+        if num_skips >= 10:
             if (
                 input(
                     f"Tools have been run without human input {num_skips} times, continue? [y/n]: "
@@ -433,6 +449,7 @@ def _make_progress(messages):
         else:
             # maybe content is tool call json?
             content = response.content
+            _parsed = None
             if isinstance(content, str):
                 with contextlib.suppress(Exception):
                     _parsed = json.loads(content)
@@ -562,7 +579,7 @@ def execute_command(args: ExecuteCommand) -> str:
         print(f"Could not parse command, please review it manually: {e}")
         is_safe = False
     # Get ALLOW_ALL from config dynamically
-    allow_all = config("ALLOW_ALL_COMMAND", default=False, cast=bool)
+    allow_all = config("ALLOW_ALL_COMMANDS", default=False, cast=bool)
     if (
         not is_safe
         and not allow_all
