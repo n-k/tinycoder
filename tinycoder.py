@@ -501,6 +501,15 @@ class ExecuteCommand(BaseModel):
         Note: when using `sed` for editing contents of a file, you must always
         replace entire lines or blocks of lines, even if you have to edit a small
         portion of a line or small potions of multiple lines.
+    ===
+    When modifying files with `sed`:
+    - Always operate on **whole lines**, not substrings within a line.
+    - Use **patterns or markers** to find insertion points (e.g., `# INSERT HERE`, function names, etc.).
+    - Avoid assuming line numbers—they change over time.
+    - When inserting, use `sed '/pattern/a\nnew line'` for **after** or `/i\` for **before**.
+    - Escape special characters (like `/`, `&`, and `\`) properly when needed.
+    - Do **not** overwrite unrelated code blocks—preserve context.
+    ===
 
     Args:
     - command: (required) The CLI command to execute. This should be valid for the current operating system.
