@@ -506,8 +506,8 @@ class ExecuteCommand(BaseModel):
     - Always operate on **whole lines**, not substrings within a line.
     - Use **patterns or markers** to find insertion points (e.g., `# INSERT HERE`, function names, etc.).
     - Avoid assuming line numbers—they change over time.
-    - When inserting, use `sed '/pattern/a\nnew line'` for **after** or `/i\` for **before**.
-    - Escape special characters (like `/`, `&`, and `\`) properly when needed.
+    - When inserting, use `sed '/pattern/a\nnew line'` for **after** or `/i\\` for **before**.
+    - Escape special characters (like `/`, `&`, and `\\`) properly when needed.
     - Do **not** overwrite unrelated code blocks—preserve context.
     ===
 
