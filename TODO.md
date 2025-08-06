@@ -1,5 +1,8 @@
 # TODO
-
+- Show progress when pulling model in ollama
+- mcp server
+- docker container 
+- Config folder?
 - Test
   - gemini provider
   - openrouter provider
@@ -8,8 +11,6 @@
   - code quality
   - release-please
 - Add agent.md (claude.md) instructions
-- mcp server
-  - docker container 
 - Taskfiles
   - taskfile.yml
   - taskfiles/docker.yml

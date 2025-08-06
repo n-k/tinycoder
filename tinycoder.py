@@ -253,7 +253,6 @@ def init_shell():
         }}
         PS1="[✨ai] $PS1"
         trap _deactivate_tiny_coder EXIT
-        trap _deactivate_tiny_coder INT TERM
     """)
     try:
         print(shell_script)
@@ -351,7 +350,7 @@ def _get_client():
             model=model_name or "gemini-2.0-flash"
         )
     elif model_provider == 'ollama':
-        ollama_model = model_name or 'qwen2.5-coder:7b'
+        ollama_model = model_name or 'bjoernb/qwen3-coder-30b-1m:latest'
         ollama_client = ollama.Client(config("OLLAMA_BASE_URL", default='localhost'))
         model_exists = False
         try:
@@ -362,7 +361,8 @@ def _get_client():
         if not model_exists:
             if input(f"Ollama does not have model '{ollama_model}'. Pull? [y/n]: ") != 'y':
                 sys.exit(1)
-            ollama_client.pull(ollama_model, stream=True)
+            # TODO: use stream=True and show progress
+            ollama_client.pull(ollama_model)
         llm = ChatOllama(
             base_url=config("OLLAMA_BASE_URL", default='localhost'),
             model=ollama_model,
