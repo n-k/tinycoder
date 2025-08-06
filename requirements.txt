@@ -1,3 +1,4 @@
+# this file is only kept to make vscode happy
 aiohappyeyeballs==2.6.1
 aiohttp==3.12.15
 aiosignal==1.4.0
@@ -69,3 +70,4 @@ typing-inspection==0.4.1
 urllib3==2.5.0
 yarl==1.20.1
 zstandard==0.23.0
+ollama

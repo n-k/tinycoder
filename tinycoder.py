@@ -14,6 +14,7 @@
 #   "langchain-google-genai",
 #   "langchain-ollama",
 #   "langchain-openai",
+#   "ollama",
 #   "py-jsonl",
 #   "pydantic",
 #   "python-decouple",
@@ -38,6 +39,7 @@ import datetime
 import itertools
 import json
 import jsonl
+import ollama
 import os
 import queue
 import requests
@@ -136,6 +138,8 @@ def _get_command_parser() -> argparse.ArgumentParser:
         "text", nargs=argparse.REMAINDER, help="Message text to send"
     )
 
+    subparsers.add_parser("pipe", help="Read message from stdin")
+
     subparsers.add_parser("find_free", help="Find free models on openrouter")
 
     return parser
@@ -154,6 +158,14 @@ async def main():
         init_shell()
     elif args.command == "message":
         message(" ".join(args.text))
+    elif args.command == "pipe":
+        text = ''
+        try:
+            text = sys.stdin.read()
+        except BrokenPipeError:
+            pass
+        if text:
+            message(text)
     elif args.command == "find_free":
         find_free()
     else:
@@ -207,6 +219,7 @@ def init_shell():
         export TINY_CODER_ACTIVE=1
         alias ai='{SCRIPT_PATH} message $@'
         alias aiedit='_edit_and_message'
+        alias aipipe='_aipipe'
         alias deactivate='_deactivate_tiny_coder'
         OLD_PS1=$PS1
         touch {log_file_path}
@@ -219,9 +232,13 @@ def init_shell():
           rm "$tmpfile"
           {SCRIPT_PATH} message "$arg"
         }}
+        _aipipe() {{
+          cat - | {SCRIPT_PATH} pipe
+        }}
         _deactivate_tiny_coder() {{
             unalias ai
             unalias aiedit
+            unalias aipipe
             unalias deactivate
             PS1="$OLD_PS1"
             unset TINY_CODER_ACTIVE
@@ -229,6 +246,7 @@ def init_shell():
             unset OLD_PS1
             unset -f _deactivate_tiny_coder
             unset -f _edit_and_message
+            unset -f _aipipe
             rm -f {log_file_path}
             trap - EXIT
             trap - INT TERM
@@ -308,7 +326,7 @@ def _get_client():
         SystemExit: If required API keys are not set for the selected provider.
     """
     # Ensure we're using the latest config values
-    model_provider = config("MODEL_PROVIDER", default='openrouter')
+    model_provider = config("MODEL_PROVIDER", default='ollama')
     model_name = config("MODEL_NAME", default=None)
 
     llm = None
@@ -333,9 +351,21 @@ def _get_client():
             model=model_name or "gemini-2.0-flash"
         )
     elif model_provider == 'ollama':
+        ollama_model = model_name or 'qwen2.5-coder:7b'
+        ollama_client = ollama.Client(config("OLLAMA_BASE_URL", default='localhost'))
+        model_exists = False
+        try:
+            ollama_client.show(ollama_model)
+            model_exists = True
+        except:
+            model_exists = False
+        if not model_exists:
+            if input(f"Ollama does not have model '{ollama_model}'. Pull? [y/n]: ") != 'y':
+                sys.exit(1)
+            ollama_client.pull(ollama_model, stream=True)
         llm = ChatOllama(
             base_url=config("OLLAMA_BASE_URL", default='localhost'),
-            model=model_name or 'qwen2.5-coder:14b-instruct',
+            model=ollama_model,
             format="json",
         )
     else:
@@ -371,50 +401,14 @@ def _make_progress(messages):
     num_skips = 0
     while skip_input:
         num_skips = num_skips + 1
-        if num_skips > 10:
+        if num_skips >= 10:
             if input(f"Tools have been run without human input {num_skips} times, continue? [y/n]: ") != 'y':
                 break
             else:
                 num_skips = 0
         # reset skip for next round
         skip_input = False
-        try:
-            response: Any = client.invoke(messages)
-        except Exception as e:
-            # Check if this is an Ollama model not found error
-            if hasattr(e, '__class__') and e.__class__.__name__ == 'ResponseError':
-                error_msg = str(e)
-                if 'not found, try pulling it first' in error_msg and config("MODEL_PROVIDER", default='openrouter') == 'ollama':
-                    # Extract model name from error message
-                    model_name = config("MODEL_NAME", default='qwen2.5-coder:14b-instruct')
-                    print(f"Model '{model_name}' not found. Pulling it now...")
-
-                    # Pull the model using subprocess
-                    try:
-                        result = subprocess.run(
-                            ['ollama', 'pull', model_name],
-                            capture_output=True,
-                            text=True,
-                            check=False
-                        )
-
-                        if result.returncode == 0:
-                            print(f"Successfully pulled model '{model_name}'")
-                            # Retry the invoke after pulling the model
-                            response = client.invoke(messages)
-                        else:
-                            print(f"Failed to pull model: {result.stderr}", file=sys.stderr)
-                            raise
-                    except FileNotFoundError:
-                        print("Ollama command not found. Please ensure Ollama is installed and in your PATH.", file=sys.stderr)
-                        raise
-                    except Exception as pull_error:
-                        print(f"Error pulling model: {pull_error}", file=sys.stderr)
-                        raise
-                else:
-                    raise
-            else:
-                raise
+        response: Any = client.invoke(messages)
         messages.append(response)
         tool_calls = []
         if len(response.tool_calls) > 0:
@@ -422,6 +416,7 @@ def _make_progress(messages):
         else:
             # maybe content is tool call json?
             content = response.content
+            _parsed = None
             if isinstance(content, str):
                 with contextlib.suppress(Exception):
                     _parsed = json.loads(content)
@@ -473,7 +468,16 @@ class ExecuteCommand(BaseModel):
         Note: when using `sed` for editing contents of a file, you must always
         replace entire lines or blocks of lines, even if you have to edit a small
         portion of a line or small potions of multiple lines.
-
+    ===
+    When modifying files with `sed`:
+    - Always operate on **whole lines**, not substrings within a line.
+    - Use **patterns or markers** to find insertion points (e.g., `# INSERT HERE`, function names, etc.).
+    - Avoid assuming line numbers—they change over time.
+    - When inserting, use `sed '/pattern/a\nnew line'` for **after** or `/i` for **before**.
+    - Escape special characters (like `/`, `&`, and `) properly when needed.
+    - Do **not** overwrite unrelated code blocks—preserve context.
+    ===
+    
     Args:
     - command: (required) The CLI command to execute. This should be valid for the current operating system.
         Ensure the command is properly formatted and does not contain any harmful instructions.
@@ -549,7 +553,7 @@ def execute_command(args: ExecuteCommand) -> str:
         print(f'Could not parse command, please review it manually: {e}')
         is_safe = False
     # Get ALLOW_ALL from config dynamically
-    allow_all = config('ALLOW_ALL_COMMAND', default=False, cast=bool)
+    allow_all = config('ALLOW_ALL_COMMANDS', default=False, cast=bool)
     if not is_safe and not allow_all and input(f"Allow running {args.command} ? [y/n]: ") != 'y':
         return f'User rejected running this command: {args.command}'
     def _run_command(command, output_queue, result_dict):
